@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <include domain="file" path="stickers/" />
+    <include domain="database" path="sticker_it.db" />
+    <exclude domain="sharedpref" path="." />
+</full-backup-content>
