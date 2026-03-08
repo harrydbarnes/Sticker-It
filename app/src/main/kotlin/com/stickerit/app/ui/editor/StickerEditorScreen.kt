@@ -1,6 +1,5 @@
 package com.stickerit.app.ui.editor
 
-import androidx.compose.ui.platform.LocalDensity
 import android.net.Uri
 import androidx.compose.animation.*
 import androidx.compose.animation.core.animateFloatAsState
