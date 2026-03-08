@@ -155,7 +155,7 @@ class ImageSegmentationHelper @Inject constructor() {
                         }
                     } else {
                         for (i in updated.indices) {
-                            updated[i] = minOf(updated[i], 1f - subMask[i])
+                            updated[i] = (updated[i] - subMask[i]).coerceAtLeast(0f)
                         }
                     }
                 }

@@ -122,20 +122,26 @@ class StickerEditorViewModel @Inject constructor(
                 val px = (point.x * maskWidth).toInt()
                 val py = (point.y * maskHeight).toInt()
 
-                var tappedSubject: com.google.mlkit.vision.segmentation.subject.Subject? = null
+                var tappedSubjectMask: FloatArray? = null
+
                 for (subject in subjects) {
-                    val subMask = segmentationHelper.getSubjectMaskAt(subject, maskWidth, maskHeight)
-                    val idx = py * maskWidth + px
-                    if (idx in subMask.indices && subMask[idx] > 0.5f) {
-                        tappedSubject = subject
-                        break
+                    // Fast check: is the tap within the subject's bounding box?
+                    if (px >= subject.startX && px < subject.startX + subject.width &&
+                        py >= subject.startY && py < subject.startY + subject.height) {
+
+                        // Slower check: generate mask and check pixel
+                        val subMask = segmentationHelper.getSubjectMaskAt(subject, maskWidth, maskHeight)
+                        val idx = py * maskWidth + px
+                        if (idx in subMask.indices && subMask[idx] > 0.5f) {
+                            tappedSubjectMask = subMask
+                            break
+                        }
                     }
                 }
 
-                if (tappedSubject != null) {
-                    val subMask = segmentationHelper.getSubjectMaskAt(tappedSubject, maskWidth, maskHeight)
+                if (tappedSubjectMask != null) {
                     val stroke = BrushStroke.SubjectFill(
-                        subjectMask = subMask,
+                        subjectMask = tappedSubjectMask,
                         include = isInclude,
                     )
                     brushStrokes.add(stroke)
