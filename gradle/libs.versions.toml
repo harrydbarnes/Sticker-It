@@ -12,7 +12,7 @@ composeBom = "2025.01.01"
 hilt = "2.53"
 hiltNavigationCompose = "1.2.0"
 navigationCompose = "2.8.5"
-mlkitSegmentation = "16.0.0-beta6"
+mlkitSegmentation = "16.0.0-beta1"
 mlkitObjectDetection = "17.0.2"
 coil = "2.7.0"
 coroutines = "1.9.0"
@@ -44,8 +44,8 @@ hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref
 hilt-compiler = { group = "com.google.dagger", name = "hilt-android-compiler", version.ref = "hilt" }
 hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-compose", version.ref = "hiltNavigationCompose" }
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
-mlkit-selfie-segmentation = { group = "com.google.mlkit", name = "selfie-segmentation", version = "16.0.0-beta6" }
-mlkit-subject-segmentation = { group = "com.google.mlkit", name = "subject-segmentation", version.ref = "mlkitSegmentation" }
+mlkit-selfie-segmentation = { group = "com.google.mlkit", name = "selfie-segmentation", version = "16.0.0-beta1" }
+mlkit-subject-segmentation = { group = "com.google.android.gms", name = "play-services-mlkit-subject-segmentation", version.ref = "mlkitSegmentation" }
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
