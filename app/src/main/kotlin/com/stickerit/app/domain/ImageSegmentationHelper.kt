@@ -90,6 +90,32 @@ class ImageSegmentationHelper @Inject constructor() {
     }
 
     /**
+     * Checks if a point (x, y) is within the subject's bounds and has a confidence
+     * score > 0.5 without allocating a full-size mask.
+     */
+    fun isTapOnSubject(
+        subject: com.google.mlkit.vision.segmentation.subject.Subject,
+        px: Int,
+        py: Int,
+    ): Boolean {
+        // Fast bounding box check
+        if (px < subject.startX || px >= subject.startX + subject.width ||
+            py < subject.startY || py >= subject.startY + subject.height) {
+            return false
+        }
+        val buffer = subject.confidenceMask ?: return false
+
+        val localX = px - subject.startX
+        val localY = py - subject.startY
+        val index = localY * subject.width + localX
+
+        if (index < 0 || index >= buffer.capacity()) return false
+
+        // FloatBuffer.get(index) returns the float at the specified absolute index
+        return buffer.get(index) > 0.5f
+    }
+
+    /**
      * Extracts the float array confidence mask for a specific [subject].
      * The mask fits into the overall image dimensions.
      */

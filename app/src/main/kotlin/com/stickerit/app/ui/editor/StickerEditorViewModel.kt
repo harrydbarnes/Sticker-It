@@ -38,6 +38,7 @@ class StickerEditorViewModel @Inject constructor(
     // ---------- internal state ----------
 
     private var originalBitmap: Bitmap? = null
+    private var baseConfidenceMask: FloatArray? = null
     private var confidenceMask: FloatArray? = null
     private var maskWidth: Int = 0
     private var maskHeight: Int = 0
@@ -60,6 +61,7 @@ class StickerEditorViewModel @Inject constructor(
 
                 val result = segmentationHelper.segment(bitmap)
                 originalBitmap = result.original
+                baseConfidenceMask = result.confidenceMask.copyOf()
                 confidenceMask = result.confidenceMask.copyOf()
                 maskWidth = result.maskWidth
                 maskHeight = result.maskHeight
@@ -125,17 +127,9 @@ class StickerEditorViewModel @Inject constructor(
                 var tappedSubjectMask: FloatArray? = null
 
                 for (subject in subjects) {
-                    // Fast check: is the tap within the subject's bounding box?
-                    if (px >= subject.startX && px < subject.startX + subject.width &&
-                        py >= subject.startY && py < subject.startY + subject.height) {
-
-                        // Slower check: generate mask and check pixel
-                        val subMask = segmentationHelper.getSubjectMaskAt(subject, maskWidth, maskHeight)
-                        val idx = py * maskWidth + px
-                        if (idx in subMask.indices && subMask[idx] > 0.5f) {
-                            tappedSubjectMask = subMask
-                            break
-                        }
+                    if (segmentationHelper.isTapOnSubject(subject, px, py)) {
+                        tappedSubjectMask = segmentationHelper.getSubjectMaskAt(subject, maskWidth, maskHeight)
+                        break
                     }
                 }
 
@@ -171,19 +165,18 @@ class StickerEditorViewModel @Inject constructor(
     fun resetEdits() {
         brushStrokes.clear()
         activeStrokePoints.clear()
-        // Re-run segmentation on the original
+        val base = baseConfidenceMask ?: return
         val orig = originalBitmap ?: return
+
         viewModelScope.launch {
-            _uiState.value = EditorUiState.Loading
-            val result = segmentationHelper.segment(orig)
-            confidenceMask = result.confidenceMask.copyOf()
-            maskWidth = result.maskWidth
-            maskHeight = result.maskHeight
-            _uiState.value = EditorUiState.SegmentationReady(
-                originalBitmap = result.original,
-                maskBitmap = buildMaskOverlay(),
-                previewBitmap = buildPreview(),
-            )
+            confidenceMask = base.copyOf()
+            val current = _uiState.value
+            if (current is EditorUiState.SegmentationReady) {
+                _uiState.value = current.copy(
+                    maskBitmap = buildMaskOverlay(),
+                    previewBitmap = buildPreview(),
+                )
+            }
         }
     }
 
@@ -246,12 +239,12 @@ class StickerEditorViewModel @Inject constructor(
 
     private fun recomputeMaskFromStrokes() {
         viewModelScope.launch(Dispatchers.Default) {
+            val base = baseConfidenceMask ?: return@launch
             val orig = originalBitmap ?: return@launch
-            val result = segmentationHelper.segment(orig)
             val updatedMask = segmentationHelper.applyBrushStrokes(
-                confidenceMask = result.confidenceMask,
-                maskWidth = result.maskWidth,
-                maskHeight = result.maskHeight,
+                confidenceMask = base,
+                maskWidth = maskWidth,
+                maskHeight = maskHeight,
                 brushStrokes = brushStrokes,
             )
             confidenceMask = updatedMask
