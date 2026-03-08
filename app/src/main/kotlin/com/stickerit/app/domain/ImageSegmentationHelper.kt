@@ -192,7 +192,7 @@ class ImageSegmentationHelper @Inject constructor() {
         for (y in yMin..yMax) {
             val dy = y - cy
             // Calculate the max dx for this row using x^2 + y^2 = r^2 -> x = sqrt(r^2 - y^2)
-            val dxMax = kotlin.math.sqrt((r2 - dy * dy).toDouble()).toInt()
+            val dxMax = kotlin.math.sqrt((r2 - dy.toLong() * dy).toDouble()).toInt()
 
             val xMin = maxOf(0, cx - dxMax)
             val xMax = minOf(w - 1, cx + dxMax)
