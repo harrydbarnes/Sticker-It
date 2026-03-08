@@ -32,6 +32,12 @@ class ImageSegmentationHelper @Inject constructor() {
             SubjectSegmenterOptions.Builder()
                 .enableForegroundBitmap()
                 .enableForegroundConfidenceMask()
+                .enableMultipleSubjects(
+                    SubjectSegmenterOptions.SubjectResultOptions.Builder()
+                        .enableSubjectBitmap()
+                        .enableConfidenceMask()
+                        .build()
+                )
                 .build()
         )
     }
@@ -45,6 +51,8 @@ class ImageSegmentationHelper @Inject constructor() {
         val confidenceMask: FloatArray,
         val maskWidth: Int,
         val maskHeight: Int,
+        /** List of available subjects found in the image */
+        val subjects: List<com.google.mlkit.vision.segmentation.subject.Subject> = emptyList(),
     )
 
     /**
@@ -63,21 +71,53 @@ class ImageSegmentationHelper @Inject constructor() {
                 .addOnSuccessListener { result ->
                     val foreground = result.foregroundBitmap
                         ?: buildForegroundFromMask(scaled, result)
-                    val maskBuffer = result.foregroundConfidenceMask
-                    val mask = maskBuffer?.let { val arr = FloatArray(it.capacity()); it.rewind(); it.get(arr); arr }
-                        ?: FloatArray(scaled.width * scaled.height) { 0f }
+                    val emptyMask = FloatArray(scaled.width * scaled.height) { 0f }
                     cont.resume(
                         SegmentationResult(
                             original = scaled,
                             foregroundBitmap = foreground,
-                            confidenceMask = mask,
+                            confidenceMask = emptyMask,
                             maskWidth = scaled.width,
                             maskHeight = scaled.height,
+                            subjects = result.subjects,
                         )
                     )
                 }
                 .addOnFailureListener { cont.resumeWithException(it) }
         }
+    }
+
+    /**
+     * Extracts the float array confidence mask for a specific [subject].
+     * The mask fits into the overall image dimensions.
+     */
+    fun getSubjectMaskAt(
+        subject: com.google.mlkit.vision.segmentation.subject.Subject,
+        width: Int,
+        height: Int,
+    ): FloatArray {
+        val outMask = FloatArray(width * height) { 0f }
+        val buffer = subject.confidenceMask ?: return outMask
+        val subjectMask = FloatArray(buffer.capacity())
+        buffer.rewind()
+        buffer.get(subjectMask)
+
+        val startX = subject.startX
+        val startY = subject.startY
+        val subjectWidth = subject.width
+        val subjectHeight = subject.height
+
+        for (y in 0 until subjectHeight) {
+            val imgY = startY + y
+            if (imgY < 0 || imgY >= height) continue
+            for (x in 0 until subjectWidth) {
+                val imgX = startX + x
+                if (imgX < 0 || imgX >= width) continue
+                val subjectVal = subjectMask[y * subjectWidth + x]
+                outMask[imgY * width + imgX] = subjectVal
+            }
+        }
+        return outMask
     }
 
     /**
@@ -96,13 +136,29 @@ class ImageSegmentationHelper @Inject constructor() {
     ): FloatArray {
         val updated = confidenceMask.copyOf()
         for (stroke in brushStrokes) {
-            val value = if (stroke.include) 1f else 0f
-            for (point in stroke.points) {
-                // Convert normalised coordinates (0..1) to mask pixel coordinates
-                val cx = (point.x * maskWidth).toInt()
-                val cy = (point.y * maskHeight).toInt()
-                val r = (stroke.radiusNorm * maskWidth).toInt().coerceAtLeast(1)
-                paintCircle(updated, maskWidth, maskHeight, cx, cy, r, value)
+            when (stroke) {
+                is BrushStroke.Stroke -> {
+                    val value = if (stroke.include) 1f else 0f
+                    for (point in stroke.points) {
+                        // Convert normalised coordinates (0..1) to mask pixel coordinates
+                        val cx = (point.x * maskWidth).toInt()
+                        val cy = (point.y * maskHeight).toInt()
+                        val r = (stroke.radiusNorm * maskWidth).toInt().coerceAtLeast(1)
+                        paintCircle(updated, maskWidth, maskHeight, cx, cy, r, value)
+                    }
+                }
+                is BrushStroke.SubjectFill -> {
+                    val subMask = stroke.subjectMask
+                    if (stroke.include) {
+                        for (i in updated.indices) {
+                            updated[i] = maxOf(updated[i], subMask[i])
+                        }
+                    } else {
+                        for (i in updated.indices) {
+                            updated[i] = minOf(updated[i], 1f - subMask[i])
+                        }
+                    }
+                }
             }
         }
         return updated
@@ -211,11 +267,20 @@ class ImageSegmentationHelper @Inject constructor() {
 // Brush stroke data
 // ---------------------------------------------------------------------------
 
-data class BrushStroke(
-    /** Whether this stroke adds (true) or removes (false) area */
-    val include: Boolean,
-    /** List of normalised (0..1) canvas points */
-    val points: List<PointF>,
-    /** Brush radius as a fraction of image width */
-    val radiusNorm: Float = 0.05f,
-)
+sealed interface BrushStroke {
+    val include: Boolean
+
+    data class Stroke(
+        /** Whether this stroke adds (true) or removes (false) area */
+        override val include: Boolean,
+        /** List of normalised (0..1) canvas points */
+        val points: List<PointF>,
+        /** Brush radius as a fraction of image width */
+        val radiusNorm: Float = 0.05f,
+    ) : BrushStroke
+
+    class SubjectFill(
+        val subjectMask: FloatArray,
+        override val include: Boolean,
+    ) : BrushStroke
+}

@@ -41,6 +41,7 @@ class StickerEditorViewModel @Inject constructor(
     private var confidenceMask: FloatArray? = null
     private var maskWidth: Int = 0
     private var maskHeight: Int = 0
+    private var subjects: List<com.google.mlkit.vision.segmentation.subject.Subject> = emptyList()
 
     // Accumulated brush strokes for undo support
     private val brushStrokes = mutableListOf<BrushStroke>()
@@ -62,6 +63,7 @@ class StickerEditorViewModel @Inject constructor(
                 confidenceMask = result.confidenceMask.copyOf()
                 maskWidth = result.maskWidth
                 maskHeight = result.maskHeight
+                subjects = result.subjects
 
                 val preview = buildPreview()
                 _uiState.value = EditorUiState.SegmentationReady(
@@ -70,7 +72,12 @@ class StickerEditorViewModel @Inject constructor(
                     previewBitmap = preview,
                 )
             } catch (e: Exception) {
-                _uiState.value = EditorUiState.Error(e.message ?: "Segmentation failed")
+                val msg = e.message ?: ""
+                if (msg.contains("download", ignoreCase = true)) {
+                    _uiState.value = EditorUiState.Error("Downloading ML Kit module. Please wait a moment and try again.")
+                } else {
+                    _uiState.value = EditorUiState.Error(e.message ?: "Segmentation failed")
+                }
             }
         }
     }
@@ -95,8 +102,51 @@ class StickerEditorViewModel @Inject constructor(
 
     fun onBrushDragEnd() {
         if (activeStrokePoints.isNotEmpty()) {
-            val stroke = BrushStroke(
-                include = brushState.value.mode == BrushMode.INCLUDE,
+            val isInclude = brushState.value.mode == BrushMode.INCLUDE
+
+            // Check if this is a tap
+            var isTap = false
+            if (activeStrokePoints.size == 1) {
+                isTap = true
+            } else {
+                val first = activeStrokePoints.first()
+                val last = activeStrokePoints.last()
+                val dist = kotlin.math.hypot(first.x - last.x.toDouble(), first.y - last.y.toDouble())
+                if (dist < 0.01) {
+                    isTap = true
+                }
+            }
+
+            if (isTap && subjects.isNotEmpty()) {
+                val point = activeStrokePoints.first()
+                val px = (point.x * maskWidth).toInt()
+                val py = (point.y * maskHeight).toInt()
+
+                var tappedSubject: com.google.mlkit.vision.segmentation.subject.Subject? = null
+                for (subject in subjects) {
+                    val subMask = segmentationHelper.getSubjectMaskAt(subject, maskWidth, maskHeight)
+                    val idx = py * maskWidth + px
+                    if (idx in subMask.indices && subMask[idx] > 0.5f) {
+                        tappedSubject = subject
+                        break
+                    }
+                }
+
+                if (tappedSubject != null) {
+                    val subMask = segmentationHelper.getSubjectMaskAt(tappedSubject, maskWidth, maskHeight)
+                    val stroke = BrushStroke.SubjectFill(
+                        subjectMask = subMask,
+                        include = isInclude,
+                    )
+                    brushStrokes.add(stroke)
+                    activeStrokePoints.clear()
+                    recomputeMaskFromStrokes()
+                    return
+                }
+            }
+
+            val stroke = BrushStroke.Stroke(
+                include = isInclude,
                 points = activeStrokePoints.toList(),
                 radiusNorm = brushState.value.radius / (maskWidth.toFloat().coerceAtLeast(1f)),
             )
@@ -159,7 +209,7 @@ class StickerEditorViewModel @Inject constructor(
     private fun applyActiveStroke() {
         viewModelScope.launch(Dispatchers.Default) {
             val base = confidenceMask ?: return@launch
-            val currentStroke = BrushStroke(
+            val currentStroke = BrushStroke.Stroke(
                 include = brushState.value.mode == BrushMode.INCLUDE,
                 points = activeStrokePoints.toList(),
                 radiusNorm = brushState.value.radius / (maskWidth.toFloat().coerceAtLeast(1f)),
