@@ -86,6 +86,7 @@ fun StickerGalleryScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(padding),
+                    onCreateSticker = onBack,
                 )
             }
 
@@ -368,7 +369,10 @@ private fun StickerItem(
 }
 
 @Composable
-private fun EmptyGallery(modifier: Modifier = Modifier) {
+private fun EmptyGallery(
+    modifier: Modifier = Modifier,
+    onCreateSticker: () -> Unit = {},
+) {
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -392,6 +396,10 @@ private fun EmptyGallery(modifier: Modifier = Modifier) {
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
         )
+        Spacer(Modifier.height(24.dp))
+        Button(onClick = onCreateSticker) {
+            Text("Create Sticker")
+        }
     }
 }
 
