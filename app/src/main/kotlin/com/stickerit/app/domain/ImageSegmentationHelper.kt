@@ -71,12 +71,14 @@ class ImageSegmentationHelper @Inject constructor() {
                 .addOnSuccessListener { result ->
                     val foreground = result.foregroundBitmap
                         ?: buildForegroundFromMask(scaled, result)
-                    val emptyMask = FloatArray(scaled.width * scaled.height) { 0f }
+                    val maskBuffer = result.foregroundConfidenceMask
+                    val mask = maskBuffer?.let { val arr = FloatArray(it.capacity()); it.rewind(); it.get(arr); arr }
+                        ?: FloatArray(scaled.width * scaled.height) { 0f }
                     cont.resume(
                         SegmentationResult(
                             original = scaled,
                             foregroundBitmap = foreground,
-                            confidenceMask = emptyMask,
+                            confidenceMask = mask,
                             maskWidth = scaled.width,
                             maskHeight = scaled.height,
                             subjects = result.subjects,
