@@ -185,7 +185,7 @@ class ImageSegmentationHelper @Inject constructor() {
         // we calculate the exact x-span for each y-row using Pythagoras.
         // This reduces loop iterations by ~21% and removes the branch condition in the inner loop,
         // making brush strokes significantly faster (up to ~3-4x in benchmarks).
-        val r2 = radius * radius
+        val r2 = radius.toLong() * radius
         val yMin = maxOf(0, cy - radius)
         val yMax = minOf(h - 1, cy + radius)
 
