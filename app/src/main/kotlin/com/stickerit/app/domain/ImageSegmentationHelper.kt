@@ -160,8 +160,7 @@ class ImageSegmentationHelper @Inject constructor() {
 
     private fun buildForegroundFromMask(bitmap: Bitmap, result: SubjectSegmentationResult): Bitmap {
         val out = bitmap.copy(Bitmap.Config.ARGB_8888, true)
-        val maskBuffer = result.foregroundConfidenceMask
-                    val mask = maskBuffer?.let { val arr = FloatArray(it.capacity()); it.rewind(); it.get(arr); arr } ?: return out
+        val mask = result.foregroundConfidenceMask?.toFloatArray() ?: return out
         val pixels = IntArray(bitmap.width * bitmap.height)
         bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
         for (i in pixels.indices) {
