@@ -72,7 +72,7 @@ class ImageSegmentationHelper @Inject constructor() {
                     val foreground = result.foregroundBitmap
                         ?: buildForegroundFromMask(scaled, result)
                     val maskBuffer = result.foregroundConfidenceMask
-                    val mask = maskBuffer?.let { val arr = FloatArray(it.capacity()); it.rewind(); it.get(arr); arr }
+                    val mask = maskBuffer?.toFloatArray()
                         ?: FloatArray(scaled.width * scaled.height) { 0f }
                     cont.resume(
                         SegmentationResult(
@@ -87,6 +87,13 @@ class ImageSegmentationHelper @Inject constructor() {
                 }
                 .addOnFailureListener { cont.resumeWithException(it) }
         }
+    }
+
+    private fun java.nio.FloatBuffer.toFloatArray(): FloatArray {
+        val arr = FloatArray(this.capacity())
+        this.rewind()
+        this.get(arr)
+        return arr
     }
 
     /**
@@ -109,8 +116,6 @@ class ImageSegmentationHelper @Inject constructor() {
         val localY = py - subject.startY
         val index = localY * subject.width + localX
 
-        if (index < 0 || index >= buffer.capacity()) return false
-
         // FloatBuffer.get(index) returns the float at the specified absolute index
         return buffer.get(index) > 0.5f
     }
@@ -126,9 +131,7 @@ class ImageSegmentationHelper @Inject constructor() {
     ): FloatArray {
         val outMask = FloatArray(width * height) { 0f }
         val buffer = subject.confidenceMask ?: return outMask
-        val subjectMask = FloatArray(buffer.capacity())
-        buffer.rewind()
-        buffer.get(subjectMask)
+        val subjectMask = buffer.toFloatArray()
 
         val startX = subject.startX
         val startY = subject.startY
@@ -177,13 +180,15 @@ class ImageSegmentationHelper @Inject constructor() {
                 }
                 is BrushStroke.SubjectFill -> {
                     val subMask = stroke.subjectMask
-                    if (stroke.include) {
-                        for (i in updated.indices) {
-                            updated[i] = maxOf(updated[i], subMask[i])
-                        }
-                    } else {
-                        for (i in updated.indices) {
-                            updated[i] = (updated[i] - subMask[i]).coerceAtLeast(0f)
+                    if (subMask.size == updated.size) {
+                        if (stroke.include) {
+                            for (i in updated.indices) {
+                                updated[i] = maxOf(updated[i], subMask[i])
+                            }
+                        } else {
+                            for (i in updated.indices) {
+                                updated[i] = (updated[i] - subMask[i]).coerceAtLeast(0f)
+                            }
                         }
                     }
                 }
@@ -246,7 +251,7 @@ class ImageSegmentationHelper @Inject constructor() {
     private fun buildForegroundFromMask(bitmap: Bitmap, result: SubjectSegmentationResult): Bitmap {
         val out = bitmap.copy(Bitmap.Config.ARGB_8888, true)
         val maskBuffer = result.foregroundConfidenceMask
-                    val mask = maskBuffer?.let { val arr = FloatArray(it.capacity()); it.rewind(); it.get(arr); arr } ?: return out
+                    val mask = maskBuffer?.toFloatArray() ?: return out
         val pixels = IntArray(bitmap.width * bitmap.height)
         bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
         for (i in pixels.indices) {

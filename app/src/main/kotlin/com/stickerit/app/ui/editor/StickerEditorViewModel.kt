@@ -53,6 +53,7 @@ class StickerEditorViewModel @Inject constructor(
     // ---------- public actions ----------
 
     fun loadAndSegment(uri: Uri) {
+        brushStrokes.clear()
         viewModelScope.launch {
             _uiState.value = EditorUiState.Loading
             try {
@@ -107,16 +108,16 @@ class StickerEditorViewModel @Inject constructor(
             val isInclude = brushState.value.mode == BrushMode.INCLUDE
 
             // Check if this is a tap
-            var isTap = false
-            if (activeStrokePoints.size == 1) {
-                isTap = true
+            val isTap = if (activeStrokePoints.size == 1) {
+                true
             } else {
                 val first = activeStrokePoints.first()
                 val last = activeStrokePoints.last()
-                val dist = kotlin.math.hypot(first.x - last.x.toDouble(), first.y - last.y.toDouble())
-                if (dist < 0.01) {
-                    isTap = true
-                }
+                val dist = kotlin.math.hypot(
+                    (first.x - last.x).toDouble(),
+                    (first.y - last.y).toDouble()
+                )
+                dist < 0.01
             }
 
             if (isTap && subjects.isNotEmpty()) {
