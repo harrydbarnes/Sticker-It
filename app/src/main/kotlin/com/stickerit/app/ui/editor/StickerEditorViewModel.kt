@@ -24,6 +24,10 @@ class StickerEditorViewModel @Inject constructor(
     private val segmentationHelper: ImageSegmentationHelper,
 ) : ViewModel() {
 
+    companion object {
+        private const val TAP_DISTANCE_THRESHOLD_NORM = 0.01
+    }
+
     // ---------- public state ----------
 
     private val _uiState = MutableStateFlow<EditorUiState>(EditorUiState.Idle)
@@ -115,7 +119,7 @@ class StickerEditorViewModel @Inject constructor(
                     (first.x - last.x).toDouble(),
                     (first.y - last.y).toDouble()
                 )
-                dist < 0.01
+                dist < TAP_DISTANCE_THRESHOLD_NORM
             }
 
             if (isTap && subjects.isNotEmpty()) {

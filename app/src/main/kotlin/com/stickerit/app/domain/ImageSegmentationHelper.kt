@@ -27,6 +27,10 @@ import kotlin.coroutines.resumeWithException
 @Singleton
 class ImageSegmentationHelper @Inject constructor() {
 
+    companion object {
+        private const val MIN_SUBJECT_CONFIDENCE_FOR_TAP = 0.5f
+    }
+
     private val segmenter by lazy {
         SubjectSegmentation.getClient(
             SubjectSegmenterOptions.Builder()
@@ -117,7 +121,7 @@ class ImageSegmentationHelper @Inject constructor() {
         val index = localY * subject.width + localX
 
         // FloatBuffer.get(index) returns the float at the specified absolute index
-        return buffer.get(index) > 0.5f
+        return buffer.get(index) > MIN_SUBJECT_CONFIDENCE_FOR_TAP
     }
 
     /**
