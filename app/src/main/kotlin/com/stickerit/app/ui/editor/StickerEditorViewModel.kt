@@ -217,7 +217,7 @@ class StickerEditorViewModel @Inject constructor(
         val allStrokes = currentStrokes + currentStroke
 
         viewModelScope.launch(Dispatchers.Default) {
-            val base = confidenceMask ?: return@launch
+            val base = baseConfidenceMask ?: return@launch
             val updatedMask = segmentationHelper.applyBrushStrokes(
                 confidenceMask = base,
                 maskWidth = maskWidth,
