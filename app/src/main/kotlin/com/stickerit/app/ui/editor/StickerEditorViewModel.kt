@@ -127,17 +127,17 @@ class StickerEditorViewModel @Inject constructor(
                 val px = (point.x * maskWidth).toInt()
                 val py = (point.y * maskHeight).toInt()
 
-                val tappedSubjectMask = subjects.firstNotNullOfOrNull { subject ->
+                val tappedSubject = subjects.firstNotNullOfOrNull { subject ->
                     if (segmentationHelper.isTapOnSubject(subject, px, py)) {
-                        segmentationHelper.getSubjectMaskAt(subject, maskWidth, maskHeight)
+                        subject
                     } else {
                         null
                     }
                 }
 
-                if (tappedSubjectMask != null) {
+                if (tappedSubject != null) {
                     val stroke = BrushStroke.SubjectFill(
-                        subjectMask = tappedSubjectMask,
+                        subject = tappedSubject,
                         include = isInclude,
                     )
                     brushStrokes.add(stroke)
