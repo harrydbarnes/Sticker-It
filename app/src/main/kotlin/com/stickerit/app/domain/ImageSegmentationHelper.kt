@@ -125,37 +125,6 @@ class ImageSegmentationHelper @Inject constructor() {
     }
 
     /**
-     * Extracts the float array confidence mask for a specific [subject].
-     * The mask fits into the overall image dimensions.
-     */
-    fun getSubjectMaskAt(
-        subject: com.google.mlkit.vision.segmentation.subject.Subject,
-        width: Int,
-        height: Int,
-    ): FloatArray {
-        val outMask = FloatArray(width * height) { 0f }
-        val buffer = subject.confidenceMask ?: return outMask
-        val subjectMask = buffer.toFloatArray()
-
-        val startX = subject.startX
-        val startY = subject.startY
-        val subjectWidth = subject.width
-        val subjectHeight = subject.height
-
-        for (y in 0 until subjectHeight) {
-            val imgY = startY + y
-            if (imgY < 0 || imgY >= height) continue
-            for (x in 0 until subjectWidth) {
-                val imgX = startX + x
-                if (imgX < 0 || imgX >= width) continue
-                val subjectVal = subjectMask[y * subjectWidth + x]
-                outMask[imgY * width + imgX] = subjectVal
-            }
-        }
-        return outMask
-    }
-
-    /**
      * Apply brush strokes from [brushStrokes] on top of [confidenceMask].
      *
      * Each stroke is a [BrushStroke] — either INCLUDE (set mask to 1) or
@@ -183,15 +152,26 @@ class ImageSegmentationHelper @Inject constructor() {
                     }
                 }
                 is BrushStroke.SubjectFill -> {
-                    val subMask = stroke.subjectMask
-                    if (subMask.size == updated.size) {
-                        if (stroke.include) {
-                            for (i in updated.indices) {
-                                updated[i] = maxOf(updated[i], subMask[i])
-                            }
-                        } else {
-                            for (i in updated.indices) {
-                                updated[i] = (updated[i] - subMask[i]).coerceAtLeast(0f)
+                    val subject = stroke.subject
+                    val buffer = subject.confidenceMask ?: continue
+                    val startX = subject.startX
+                    val startY = subject.startY
+                    val subjectWidth = subject.width
+                    val subjectHeight = subject.height
+
+                    for (y in 0 until subjectHeight) {
+                        val imgY = startY + y
+                        if (imgY < 0 || imgY >= maskHeight) continue
+                        for (x in 0 until subjectWidth) {
+                            val imgX = startX + x
+                            if (imgX < 0 || imgX >= maskWidth) continue
+
+                            val subjectVal = buffer.get(y * subjectWidth + x)
+                            val updatedIdx = imgY * maskWidth + imgX
+                            if (stroke.include) {
+                                updated[updatedIdx] = maxOf(updated[updatedIdx], subjectVal)
+                            } else {
+                                updated[updatedIdx] = (updated[updatedIdx] - subjectVal).coerceAtLeast(0f)
                             }
                         }
                     }
@@ -317,7 +297,7 @@ sealed interface BrushStroke {
     ) : BrushStroke
 
     data class SubjectFill(
-        val subjectMask: FloatArray,
+        val subject: com.google.mlkit.vision.segmentation.subject.Subject,
         override val include: Boolean,
     ) : BrushStroke
 }
