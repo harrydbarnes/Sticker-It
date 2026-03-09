@@ -108,9 +108,7 @@ class StickerEditorViewModel @Inject constructor(
             val isInclude = brushState.value.mode == BrushMode.INCLUDE
 
             // Check if this is a tap
-            val isTap = if (activeStrokePoints.size == 1) {
-                true
-            } else {
+            val isTap = run {
                 val first = activeStrokePoints.first()
                 val last = activeStrokePoints.last()
                 val dist = kotlin.math.hypot(
@@ -207,14 +205,16 @@ class StickerEditorViewModel @Inject constructor(
     // ---------- private helpers ----------
 
     private fun applyActiveStroke() {
+        val currentStrokes = brushStrokes.toList()
+        val currentStroke = BrushStroke.Stroke(
+            include = brushState.value.mode == BrushMode.INCLUDE,
+            points = activeStrokePoints.toList(),
+            radiusNorm = brushState.value.radius / (maskWidth.toFloat().coerceAtLeast(1f)),
+        )
+        val allStrokes = currentStrokes + currentStroke
+
         viewModelScope.launch(Dispatchers.Default) {
             val base = confidenceMask ?: return@launch
-            val currentStroke = BrushStroke.Stroke(
-                include = brushState.value.mode == BrushMode.INCLUDE,
-                points = activeStrokePoints.toList(),
-                radiusNorm = brushState.value.radius / (maskWidth.toFloat().coerceAtLeast(1f)),
-            )
-            val allStrokes = brushStrokes + currentStroke
             val updatedMask = segmentationHelper.applyBrushStrokes(
                 confidenceMask = base,
                 maskWidth = maskWidth,
@@ -239,6 +239,7 @@ class StickerEditorViewModel @Inject constructor(
     }
 
     private fun recomputeMaskFromStrokes() {
+        val currentStrokes = brushStrokes.toList()
         viewModelScope.launch(Dispatchers.Default) {
             val base = baseConfidenceMask ?: return@launch
             val orig = originalBitmap ?: return@launch
@@ -246,7 +247,7 @@ class StickerEditorViewModel @Inject constructor(
                 confidenceMask = base,
                 maskWidth = maskWidth,
                 maskHeight = maskHeight,
-                brushStrokes = brushStrokes,
+                brushStrokes = currentStrokes,
             )
             confidenceMask = updatedMask
             val preview = segmentationHelper.buildStickerBitmap(
