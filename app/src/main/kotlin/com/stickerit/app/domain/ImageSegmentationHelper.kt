@@ -154,8 +154,6 @@ class ImageSegmentationHelper @Inject constructor() {
                 is BrushStroke.SubjectFill -> {
                     val subject = stroke.subject
                     val buffer = subject.confidenceMask ?: continue
-                    val subjectMask = buffer.toFloatArray()
-
                     val startX = subject.startX
                     val startY = subject.startY
                     val subjectWidth = subject.width
@@ -168,7 +166,7 @@ class ImageSegmentationHelper @Inject constructor() {
                             val imgX = startX + x
                             if (imgX < 0 || imgX >= maskWidth) continue
 
-                            val subjectVal = subjectMask[y * subjectWidth + x]
+                            val subjectVal = buffer.get(y * subjectWidth + x)
                             val updatedIdx = imgY * maskWidth + imgX
                             if (stroke.include) {
                                 updated[updatedIdx] = maxOf(updated[updatedIdx], subjectVal)
