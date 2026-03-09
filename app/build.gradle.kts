@@ -110,12 +110,6 @@ dependencies {
     // Permissions
     implementation(libs.accompanist.permissions)
 
-    // Palette for colour extraction
-    implementation(libs.androidx.palette)
-
-    // EXIF
-    implementation(libs.androidx.exifinterface)
-
     // Testing
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

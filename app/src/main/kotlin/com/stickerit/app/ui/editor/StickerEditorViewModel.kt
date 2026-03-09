@@ -24,6 +24,10 @@ class StickerEditorViewModel @Inject constructor(
     private val segmentationHelper: ImageSegmentationHelper,
 ) : ViewModel() {
 
+    companion object {
+        private const val TAP_DISTANCE_THRESHOLD_NORM = 0.01
+    }
+
     // ---------- public state ----------
 
     private val _uiState = MutableStateFlow<EditorUiState>(EditorUiState.Idle)
@@ -38,9 +42,11 @@ class StickerEditorViewModel @Inject constructor(
     // ---------- internal state ----------
 
     private var originalBitmap: Bitmap? = null
+    private var baseConfidenceMask: FloatArray? = null
     private var confidenceMask: FloatArray? = null
     private var maskWidth: Int = 0
     private var maskHeight: Int = 0
+    private var subjects: List<com.google.mlkit.vision.segmentation.subject.Subject> = emptyList()
 
     // Accumulated brush strokes for undo support
     private val brushStrokes = mutableListOf<BrushStroke>()
@@ -51,6 +57,7 @@ class StickerEditorViewModel @Inject constructor(
     // ---------- public actions ----------
 
     fun loadAndSegment(uri: Uri) {
+        brushStrokes.clear()
         viewModelScope.launch {
             _uiState.value = EditorUiState.Loading
             try {
@@ -59,9 +66,11 @@ class StickerEditorViewModel @Inject constructor(
 
                 val result = segmentationHelper.segment(bitmap)
                 originalBitmap = result.original
+                baseConfidenceMask = result.confidenceMask.copyOf()
                 confidenceMask = result.confidenceMask.copyOf()
                 maskWidth = result.maskWidth
                 maskHeight = result.maskHeight
+                subjects = result.subjects
 
                 val preview = buildPreview()
                 _uiState.value = EditorUiState.SegmentationReady(
@@ -70,7 +79,12 @@ class StickerEditorViewModel @Inject constructor(
                     previewBitmap = preview,
                 )
             } catch (e: Exception) {
-                _uiState.value = EditorUiState.Error(e.message ?: "Segmentation failed")
+                val msg = e.message ?: ""
+                if (msg.contains("download", ignoreCase = true)) {
+                    _uiState.value = EditorUiState.Error("Downloading ML Kit module. Please wait a moment and try again.")
+                } else {
+                    _uiState.value = EditorUiState.Error(e.message ?: "Segmentation failed")
+                }
             }
         }
     }
@@ -95,8 +109,46 @@ class StickerEditorViewModel @Inject constructor(
 
     fun onBrushDragEnd() {
         if (activeStrokePoints.isNotEmpty()) {
-            val stroke = BrushStroke(
-                include = brushState.value.mode == BrushMode.INCLUDE,
+            val isInclude = brushState.value.mode == BrushMode.INCLUDE
+
+            // Check if this is a tap
+            val isTap = run {
+                val first = activeStrokePoints.first()
+                val last = activeStrokePoints.last()
+                val dist = kotlin.math.hypot(
+                    (first.x - last.x).toDouble(),
+                    (first.y - last.y).toDouble()
+                )
+                dist < TAP_DISTANCE_THRESHOLD_NORM
+            }
+
+            if (isTap && subjects.isNotEmpty()) {
+                val point = activeStrokePoints.first()
+                val px = (point.x * maskWidth).toInt()
+                val py = (point.y * maskHeight).toInt()
+
+                val tappedSubject = subjects.firstNotNullOfOrNull { subject ->
+                    if (segmentationHelper.isTapOnSubject(subject, px, py)) {
+                        subject
+                    } else {
+                        null
+                    }
+                }
+
+                if (tappedSubject != null) {
+                    val stroke = BrushStroke.SubjectFill(
+                        subject = tappedSubject,
+                        include = isInclude,
+                    )
+                    brushStrokes.add(stroke)
+                    activeStrokePoints.clear()
+                    recomputeMaskFromStrokes()
+                    return
+                }
+            }
+
+            val stroke = BrushStroke.Stroke(
+                include = isInclude,
                 points = activeStrokePoints.toList(),
                 radiusNorm = brushState.value.radius / (maskWidth.toFloat().coerceAtLeast(1f)),
             )
@@ -115,19 +167,18 @@ class StickerEditorViewModel @Inject constructor(
     fun resetEdits() {
         brushStrokes.clear()
         activeStrokePoints.clear()
-        // Re-run segmentation on the original
+        val base = baseConfidenceMask ?: return
         val orig = originalBitmap ?: return
+
         viewModelScope.launch {
-            _uiState.value = EditorUiState.Loading
-            val result = segmentationHelper.segment(orig)
-            confidenceMask = result.confidenceMask.copyOf()
-            maskWidth = result.maskWidth
-            maskHeight = result.maskHeight
-            _uiState.value = EditorUiState.SegmentationReady(
-                originalBitmap = result.original,
-                maskBitmap = buildMaskOverlay(),
-                previewBitmap = buildPreview(),
-            )
+            confidenceMask = base.copyOf()
+            val current = _uiState.value
+            if (current is EditorUiState.SegmentationReady) {
+                _uiState.value = current.copy(
+                    maskBitmap = buildMaskOverlay(),
+                    previewBitmap = buildPreview(),
+                )
+            }
         }
     }
 
@@ -157,14 +208,16 @@ class StickerEditorViewModel @Inject constructor(
     // ---------- private helpers ----------
 
     private fun applyActiveStroke() {
+        val currentStrokes = brushStrokes.toList()
+        val currentStroke = BrushStroke.Stroke(
+            include = brushState.value.mode == BrushMode.INCLUDE,
+            points = activeStrokePoints.toList(),
+            radiusNorm = brushState.value.radius / (maskWidth.toFloat().coerceAtLeast(1f)),
+        )
+        val allStrokes = currentStrokes + currentStroke
+
         viewModelScope.launch(Dispatchers.Default) {
-            val base = confidenceMask ?: return@launch
-            val currentStroke = BrushStroke(
-                include = brushState.value.mode == BrushMode.INCLUDE,
-                points = activeStrokePoints.toList(),
-                radiusNorm = brushState.value.radius / (maskWidth.toFloat().coerceAtLeast(1f)),
-            )
-            val allStrokes = brushStrokes + currentStroke
+            val base = baseConfidenceMask ?: return@launch
             val updatedMask = segmentationHelper.applyBrushStrokes(
                 confidenceMask = base,
                 maskWidth = maskWidth,
@@ -189,14 +242,15 @@ class StickerEditorViewModel @Inject constructor(
     }
 
     private fun recomputeMaskFromStrokes() {
+        val currentStrokes = brushStrokes.toList()
         viewModelScope.launch(Dispatchers.Default) {
+            val base = baseConfidenceMask ?: return@launch
             val orig = originalBitmap ?: return@launch
-            val result = segmentationHelper.segment(orig)
             val updatedMask = segmentationHelper.applyBrushStrokes(
-                confidenceMask = result.confidenceMask,
-                maskWidth = result.maskWidth,
-                maskHeight = result.maskHeight,
-                brushStrokes = brushStrokes,
+                confidenceMask = base,
+                maskWidth = maskWidth,
+                maskHeight = maskHeight,
+                brushStrokes = currentStrokes,
             )
             confidenceMask = updatedMask
             val preview = segmentationHelper.buildStickerBitmap(
