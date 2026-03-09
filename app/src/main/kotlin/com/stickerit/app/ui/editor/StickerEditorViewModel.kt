@@ -123,12 +123,11 @@ class StickerEditorViewModel @Inject constructor(
                 val px = (point.x * maskWidth).toInt()
                 val py = (point.y * maskHeight).toInt()
 
-                var tappedSubjectMask: FloatArray? = null
-
-                for (subject in subjects) {
+                val tappedSubjectMask = subjects.firstNotNullOfOrNull { subject ->
                     if (segmentationHelper.isTapOnSubject(subject, px, py)) {
-                        tappedSubjectMask = segmentationHelper.getSubjectMaskAt(subject, maskWidth, maskHeight)
-                        break
+                        segmentationHelper.getSubjectMaskAt(subject, maskWidth, maskHeight)
+                    } else {
+                        null
                     }
                 }
 

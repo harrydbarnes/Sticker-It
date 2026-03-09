@@ -312,7 +312,7 @@ sealed interface BrushStroke {
         val radiusNorm: Float = 0.05f,
     ) : BrushStroke
 
-    class SubjectFill(
+    data class SubjectFill(
         val subjectMask: FloatArray,
         override val include: Boolean,
     ) : BrushStroke
