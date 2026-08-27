@@ -2,5 +2,4 @@
 <full-backup-content>
     <include domain="file" path="stickers/" />
     <include domain="database" path="sticker_it.db" />
-    <exclude domain="sharedpref" path="." />
 </full-backup-content>
