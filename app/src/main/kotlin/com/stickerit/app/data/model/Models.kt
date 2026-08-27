@@ -3,8 +3,6 @@ package com.stickerit.app.data.model
 import androidx.room.Entity
 import androidx.room.ColumnInfo
 import androidx.room.PrimaryKey
-import androidx.room.TypeConverter
-import androidx.room.TypeConverters
 
 // ---------------------------------------------------------------------------
 // Sticker
@@ -33,6 +31,12 @@ data class Sticker(
      */
     @ColumnInfo(name = "addedToGboard")
     val legacyPackFlag: Boolean = false,
+    /** Internal copy of the source used to create this sticker, when available. */
+    val sourceFilePath: String? = null,
+    /** Binary confidence mask used to reopen the sticker for non-destructive editing. */
+    val maskFilePath: String? = null,
+    /** JSON-encoded finishing recipe used to rebuild the sticker for later edits. */
+    val finishRecipeJson: String? = null,
 )
 
 // ---------------------------------------------------------------------------
@@ -58,9 +62,30 @@ data class StickerFile(
 
 enum class BrushMode { INCLUDE, EXCLUDE }
 
+enum class FinishBackgroundType { TRANSPARENT, SOLID, GRADIENT, IMAGE }
+
+/**
+ * Non-destructive finishing choices applied after the cut-out is made.
+ * Colors are stored as ARGB ints so this model stays independent of Compose.
+ */
+data class FinishRecipe(
+    val backgroundType: FinishBackgroundType = FinishBackgroundType.TRANSPARENT,
+    val backgroundPrimaryColor: Int = 0xFFFFF4E8.toInt(),
+    val backgroundSecondaryColor: Int = 0xFFFFD4C4.toInt(),
+    val backgroundImagePath: String? = null,
+    val outlineEnabled: Boolean = false,
+    val outlineColor: Int = 0xFFFFFFFF.toInt(),
+    val outlineWidth: Float = 10f,
+    val scale: Float = 1f,
+    val offsetX: Float = 0f,
+    val offsetY: Float = 0f,
+    val text: String = "",
+    val emoji: String = "",
+)
+
 data class EditorBrushState(
-    val mode: BrushMode = BrushMode.EXCLUDE,
-    val radius: Float = 40f,
+    val mode: BrushMode = BrushMode.INCLUDE,
+    val radius: Float = 12f,
     val opacity: Float = 1f,
 )
 
@@ -70,6 +95,10 @@ sealed interface EditorUiState {
     data class SegmentationReady(
         val originalBitmap: android.graphics.Bitmap,
         val previewBitmap: android.graphics.Bitmap,
+        /** Transparent black over the pixels that are currently outside the selection. */
+        val selectionDimBitmap: android.graphics.Bitmap,
+        /** 512px composition preview including the current finishing recipe. */
+        val finishedPreviewBitmap: android.graphics.Bitmap = previewBitmap,
     ) : EditorUiState
     data class Error(val message: String) : EditorUiState
     data object Saved : EditorUiState
@@ -79,4 +108,26 @@ sealed interface GalleryUiState {
     data object Loading : GalleryUiState
     data class Ready(val stickers: List<Sticker>) : GalleryUiState
     data object Empty : GalleryUiState
+}
+
+enum class BatchItemStatus { QUEUED, PROCESSING, COMPLETE, FAILED, CANCELLED }
+
+data class BatchImportItem(
+    val uriString: String,
+    val displayName: String,
+    val status: BatchItemStatus = BatchItemStatus.QUEUED,
+    val errorMessage: String? = null,
+)
+
+data class BatchImportUiState(
+    val items: List<BatchImportItem> = emptyList(),
+    val isRunning: Boolean = false,
+    val currentIndex: Int? = null,
+) {
+    val completedCount: Int get() = items.count { it.status == BatchItemStatus.COMPLETE }
+    val failedCount: Int get() = items.count { it.status == BatchItemStatus.FAILED }
+    val pendingCount: Int get() = items.count {
+        it.status == BatchItemStatus.QUEUED || it.status == BatchItemStatus.CANCELLED
+    }
+    val isFinished: Boolean get() = items.isNotEmpty() && pendingCount == 0 && !isRunning
 }

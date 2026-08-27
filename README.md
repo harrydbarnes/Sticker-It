@@ -21,14 +21,18 @@
 - **Include / Exclude brush** — switch modes and paint over the image to add or remove areas from your sticker; close a loop to fill the area inside it
 - **Variable brush radius** — slider adjusts the stroke width in real time
 - **Live preview** — edit against the original image with a temporary brush guide, then toggle to the generated sticker on a transparent background
-- **Undo** last stroke or **Reset** all edits to rerun segmentation
+- **Undo / Redo** brush edits or **Reset** all edits to rerun segmentation
+- **Re-editable stickers** — source pixels and the current mask are kept privately so a saved sticker can be refined later from the gallery
+- **Finishing studio** — add an outline, transparent/solid/gradient/image background, reposition or resize the cut-out, and add short text or emoji before saving
 
 ### Sticker Gallery
 - **Infinite grid** of all your saved stickers
 - **Rename** any sticker with a long-press context menu
 - **Share** individual stickers via Android's share sheet
 - **Delete** stickers with confirmation
+- **Edit** any saved sticker again without losing its existing selection
 - **Select 3–30 stickers** and add or update one WhatsApp sticker pack
+- **Batch creation** — select multiple photos, watch each result process independently, retry failures, and fine-tune results later
 
 ### WhatsApp Pack Integration
 - Select the stickers that belong in your pack; the app exposes only those assets through WhatsApp's documented `ContentProvider` contract
@@ -52,7 +56,8 @@ app/
     └── ui/
         ├── NavHost.kt      Compose Navigation host
         ├── components/     Reusable composables (BrushOverlay, BrushCursor)
-        ├── editor/         StickerEditorScreen + StickerEditorViewModel
+        ├── batch/          Batch image processing queue
+        ├── editor/         StickerEditorScreen, FinishStudio, and editor ViewModels
         ├── gallery/        StickerGalleryScreen + StickerGalleryViewModel
         ├── home/           HomeScreen
         └── theme/          Material 3 colours, typography, shapes
@@ -96,6 +101,9 @@ cd StickerIt
 
 # Run unit tests
 ./gradlew test
+
+# Run Compose UI tests on a connected device or emulator
+./gradlew connectedDebugAndroidTest
 ```
 
 The debug APK will be at `app/build/outputs/apk/debug/app-debug.apk`.
@@ -111,13 +119,15 @@ The debug APK will be at `app/build/outputs/apk/debug/app-debug.apk`.
 3. ML Kit's `SubjectSegmenter` returns a per-pixel confidence float array (0..1) on older Android versions; Android 16+ uses the bundled MediaPipe DeepLab V3 category mask through the CPU delegate
 4. A preview sticker bitmap is built: pixels with confidence >= 0.5 are kept; those on the boundary (0.5..0.6) get a feathered alpha for a smooth edge
 5. The raw confidence mask is kept in memory for brush editing
+6. The finishing studio applies a reusable recipe to the cut-out and shows the final 512px composition live
+7. Saving stores the flattened WebP, private source/mask data, and finishing recipe so the sticker can be reopened and refined later
 
 ### Brush Engine
 
 - Each finger drag fires normalised (0..1) canvas coordinates into the ViewModel
 - `BrushStroke` objects accumulate in a list; each stroke is either `INCLUDE` (set mask → 1) or `EXCLUDE` (set mask → 0)
 - Drag events are conflated to one preview per frame; the completed stroke is then rendered precisely
-- Undo pops the last committed stroke and replays the rest
+- Undo and redo replay the committed stroke history
 
 ### WhatsApp Pack Integration
 
@@ -151,7 +161,7 @@ There is no public, supported Android API that lets a third-party app add arbitr
 |---|---|
 | Format | WebP (lossy, alpha preserved) |
 | Output size | 512 × 512 px |
-| Transparency | Full ARGB_8888 |
+| Transparency | Full ARGB_8888 alpha preserved (solid/image backgrounds can be opaque) |
 | Max file size | 100 KB (WhatsApp static-sticker limit) |
 
 The encoder lowers WebP quality only as needed to keep photo cut-outs below WhatsApp's static-sticker size limit.
@@ -172,10 +182,11 @@ No photo-storage or internet permission is requested. Android's system Photo Pic
 
 - [ ] Emoji tagging and accessibility labels for each sticker (for WhatsApp search and screen readers)
 - [x] Re-select a library set to update the WhatsApp pack in place
+- [x] Re-edit saved stickers with their private source image and selection mask
 - [ ] Multiple named WhatsApp packs (organise by theme)
-- [ ] Background replacement (solid colour, gradient, or custom image)
-- [ ] Sticker text overlays (add emoji or short text on top)
-- [ ] Batch import (create stickers from multiple images at once)
+- [x] Finishing studio with outline, background replacement, positioning, and text/emoji overlays
+- [x] Batch import (create stickers from multiple images at once)
+- [x] Edge-to-edge and accessibility coverage for the core screens
 - [ ] Widget for quick sticker access from the home screen
 - [ ] Export as animated WebP (support for animated stickers)
 

@@ -1,6 +1,7 @@
 package com.stickerit.app.data.local
 
 import androidx.room.*
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.stickerit.app.data.model.Sticker
 import kotlinx.coroutines.flow.Flow
 
@@ -47,9 +48,22 @@ interface StickerDao {
 
 @Database(
     entities = [Sticker::class],
-    version = 1,
+    version = 3,
     exportSchema = true,
 )
 abstract class StickerDatabase : RoomDatabase() {
     abstract fun stickerDao(): StickerDao
+}
+
+val MIGRATION_1_2 = object : Migration(1, 2) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL("ALTER TABLE stickers ADD COLUMN sourceFilePath TEXT")
+        database.execSQL("ALTER TABLE stickers ADD COLUMN maskFilePath TEXT")
+    }
+}
+
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override fun migrate(database: SupportSQLiteDatabase) {
+        database.execSQL("ALTER TABLE stickers ADD COLUMN finishRecipeJson TEXT")
+    }
 }

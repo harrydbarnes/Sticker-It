@@ -10,12 +10,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -57,18 +59,27 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import com.stickerit.app.R
 import com.stickerit.app.data.model.GalleryUiState
 import com.stickerit.app.data.model.Sticker
 import java.io.File
 
 @Composable
-fun StickerGalleryScreen(onBack: () -> Unit, viewModel: StickerGalleryViewModel = hiltViewModel()) {
+fun StickerGalleryScreen(
+    onBack: () -> Unit,
+    onEdit: (Sticker) -> Unit,
+    viewModel: StickerGalleryViewModel = hiltViewModel(),
+) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
@@ -78,6 +89,7 @@ fun StickerGalleryScreen(onBack: () -> Unit, viewModel: StickerGalleryViewModel 
 
     LaunchedEffect(Unit) { viewModel.snackbarMessage.collect(snackbarHostState::showSnackbar) }
     Scaffold(
+        contentWindowInsets = WindowInsets.safeDrawing,
         topBar = { GalleryTopBar(onBack, selectedIds.size, onClear = { selectedIds = emptySet() }, onAddToWhatsApp = {
             val stickers = (uiState as? GalleryUiState.Ready)?.stickers.orEmpty().filter { it.id in selectedIds }
             viewModel.addOrUpdateWhatsAppPack(stickers)
@@ -94,6 +106,7 @@ fun StickerGalleryScreen(onBack: () -> Unit, viewModel: StickerGalleryViewModel 
                 onToggle = { id -> selectedIds = selectedIds.let { if (id in it) it - id else it + id } },
                 onSelectAll = { selectedIds = state.stickers.take(30).mapTo(linkedSetOf()) { it.id } },
                 onShare = { sticker -> context.startActivity(Intent.createChooser(viewModel.buildShareIntent(sticker), "Share sticker")) },
+                onEdit = onEdit,
                 onDelete = { deleteTarget = it },
                 onRename = { renameTarget = it },
             )
@@ -102,10 +115,10 @@ fun StickerGalleryScreen(onBack: () -> Unit, viewModel: StickerGalleryViewModel 
     deleteTarget?.let { sticker ->
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
-            title = { Text("Delete sticker?") },
-            text = { Text("${sticker.name} will be permanently removed from your library.") },
-            confirmButton = { TextButton(onClick = { viewModel.deleteSticker(sticker); deleteTarget = null }) { Text("Delete") } },
-            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Cancel") } },
+            title = { Text(stringResource(R.string.delete_sticker_title)) },
+            text = { Text(stringResource(R.string.delete_sticker_message, sticker.name)) },
+            confirmButton = { TextButton(onClick = { viewModel.deleteSticker(sticker); deleteTarget = null }) { Text(stringResource(R.string.delete)) } },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text(stringResource(R.string.cancel)) } },
         )
     }
     renameTarget?.let { sticker -> RenameStickerDialog(
@@ -119,16 +132,21 @@ fun StickerGalleryScreen(onBack: () -> Unit, viewModel: StickerGalleryViewModel 
 @Composable
 private fun GalleryTopBar(onBack: () -> Unit, selectionCount: Int, onClear: () -> Unit, onAddToWhatsApp: () -> Unit) {
     TopAppBar(
-        title = { Text(if (selectionCount == 0) "My stickers" else "$selectionCount selected") },
-        navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back") } },
+            title = {
+                Text(
+                    if (selectionCount == 0) stringResource(R.string.gallery_title)
+                    else stringResource(R.string.selected_count, selectionCount),
+                )
+            },
+        navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, stringResource(R.string.back)) } },
         actions = {
             if (selectionCount > 0) {
-                TextButton(onClick = onClear) { Text("Clear") }
+                TextButton(onClick = onClear) { Text(stringResource(R.string.clear)) }
                 FilledTonalButton(
                     onClick = onAddToWhatsApp,
                     enabled = selectionCount in 3..30,
                     modifier = Modifier.padding(end = 8.dp),
-                ) { Text("WhatsApp") }
+                ) { Text(stringResource(R.string.whatsapp)) }
             }
         },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -136,37 +154,47 @@ private fun GalleryTopBar(onBack: () -> Unit, selectionCount: Int, onClear: () -
 }
 
 @Composable
-private fun StickerGrid(stickers: List<Sticker>, selectedIds: Set<Long>, modifier: Modifier, onToggle: (Long) -> Unit, onSelectAll: () -> Unit, onShare: (Sticker) -> Unit, onDelete: (Sticker) -> Unit, onRename: (Sticker) -> Unit) {
+private fun StickerGrid(stickers: List<Sticker>, selectedIds: Set<Long>, modifier: Modifier, onToggle: (Long) -> Unit, onSelectAll: () -> Unit, onShare: (Sticker) -> Unit, onEdit: (Sticker) -> Unit, onDelete: (Sticker) -> Unit, onRename: (Sticker) -> Unit) {
     LazyVerticalGrid(columns = GridCells.Adaptive(112.dp), modifier = modifier, contentPadding = PaddingValues(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
         item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
             Column {
-                Text("Choose 3–30 stickers, then add or update your WhatsApp pack.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                TextButton(onClick = onSelectAll, modifier = Modifier.padding(top = 2.dp)) { Text("Select first 30") }
+                Text(stringResource(R.string.whatsapp_selection_help), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick = onSelectAll, modifier = Modifier.padding(top = 2.dp)) { Text(stringResource(R.string.select_first_30)) }
             }
         }
-        items(stickers, key = { it.id }) { sticker -> StickerTile(sticker, sticker.id in selectedIds, { onToggle(sticker.id) }, { onShare(sticker) }, { onDelete(sticker) }, { onRename(sticker) }) }
+        items(stickers, key = { it.id }) { sticker -> StickerTile(sticker, sticker.id in selectedIds, { onToggle(sticker.id) }, { onShare(sticker) }, { onEdit(sticker) }, { onDelete(sticker) }, { onRename(sticker) }) }
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun StickerTile(sticker: Sticker, selected: Boolean, onToggle: () -> Unit, onShare: () -> Unit, onDelete: () -> Unit, onRename: () -> Unit) {
+private fun StickerTile(sticker: Sticker, selected: Boolean, onToggle: () -> Unit, onShare: () -> Unit, onEdit: () -> Unit, onDelete: () -> Unit, onRename: () -> Unit) {
     var menuExpanded by remember { mutableStateOf(false) }
     Column {
         Card(
-            modifier = Modifier.fillMaxWidth().aspectRatio(1f).combinedClickable(onClick = onToggle, onLongClick = { menuExpanded = true }),
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(1f)
+                .combinedClickable(onClick = onToggle, onLongClick = { menuExpanded = true })
+                .semantics {
+                    contentDescription = sticker.name
+                    stateDescription = stringResource(
+                        if (selected) R.string.selected else R.string.not_selected,
+                    )
+                },
             shape = MaterialTheme.shapes.large,
             colors = CardDefaults.cardColors(containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainer),
         ) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Checkerboard(Modifier.fillMaxSize().clip(MaterialTheme.shapes.large))
                 AsyncImage(File(sticker.filePath), sticker.name, Modifier.fillMaxSize().padding(8.dp), contentScale = ContentScale.Fit)
-                if (selected) Icon(Icons.Outlined.CheckCircle, "Selected", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp))
-                IconButton(onClick = { menuExpanded = true }, modifier = Modifier.align(Alignment.BottomEnd)) { Icon(Icons.Outlined.MoreVert, "More options") }
+                if (selected) Icon(Icons.Outlined.CheckCircle, stringResource(R.string.selected), tint = MaterialTheme.colorScheme.primary, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp))
+                IconButton(onClick = { menuExpanded = true }, modifier = Modifier.align(Alignment.BottomEnd)) { Icon(Icons.Outlined.MoreVert, stringResource(R.string.more_options)) }
                 DropdownMenu(menuExpanded, { menuExpanded = false }) {
-                    DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Outlined.Edit, null) }, onClick = { menuExpanded = false; onRename() })
-                    DropdownMenuItem(text = { Text("Share") }, leadingIcon = { Icon(Icons.Outlined.Share, null) }, onClick = { menuExpanded = false; onShare() })
-                    DropdownMenuItem(text = { Text("Delete") }, leadingIcon = { Icon(Icons.Outlined.Delete, null) }, onClick = { menuExpanded = false; onDelete() })
+                    DropdownMenuItem(text = { Text(stringResource(R.string.edit)) }, leadingIcon = { Icon(Icons.Outlined.Edit, null) }, onClick = { menuExpanded = false; onEdit() })
+                    DropdownMenuItem(text = { Text(stringResource(R.string.rename)) }, leadingIcon = { Icon(Icons.Outlined.Edit, null) }, onClick = { menuExpanded = false; onRename() })
+                    DropdownMenuItem(text = { Text(stringResource(R.string.share)) }, leadingIcon = { Icon(Icons.Outlined.Share, null) }, onClick = { menuExpanded = false; onShare() })
+                    DropdownMenuItem(text = { Text(stringResource(R.string.delete)) }, leadingIcon = { Icon(Icons.Outlined.Delete, null) }, onClick = { menuExpanded = false; onDelete() })
                 }
             }
         }
@@ -179,19 +207,19 @@ private fun RenameStickerDialog(sticker: Sticker, onDismiss: () -> Unit, onRenam
     var name by remember(sticker.id) { mutableStateOf(sticker.name) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Rename sticker") },
-        text = { androidx.compose.material3.OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }, singleLine = true) },
-        confirmButton = { TextButton(onClick = { onRename(name.trim().ifBlank { sticker.name }) }) { Text("Save") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        title = { Text(stringResource(R.string.rename_sticker_title)) },
+        text = { androidx.compose.material3.OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text(stringResource(R.string.name)) }, singleLine = true) },
+        confirmButton = { TextButton(onClick = { onRename(name.trim().ifBlank { sticker.name }) }) { Text(stringResource(R.string.save)) } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
 }
 
 @Composable
 private fun EmptyGallery(modifier: Modifier, onBack: () -> Unit) = Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
     Icon(Icons.Outlined.StickyNote2, null, Modifier.size(72.dp), MaterialTheme.colorScheme.onSurfaceVariant)
-    Spacer(Modifier.height(16.dp)); Text("Your sticker library is empty", style = MaterialTheme.typography.headlineSmall)
-    Spacer(Modifier.height(8.dp)); Text("Create a cut-out, then build a WhatsApp pack from your favourites.", textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 32.dp))
-    Spacer(Modifier.height(24.dp)); FilledTonalButton(onClick = onBack) { Text("Create a sticker") }
+    Spacer(Modifier.height(16.dp)); Text(stringResource(R.string.empty_library_title), style = MaterialTheme.typography.headlineSmall)
+    Spacer(Modifier.height(8.dp)); Text(stringResource(R.string.empty_library_message), textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 32.dp))
+    Spacer(Modifier.height(24.dp)); FilledTonalButton(onClick = onBack) { Text(stringResource(R.string.create_a_sticker)) }
 }
 
 @Composable

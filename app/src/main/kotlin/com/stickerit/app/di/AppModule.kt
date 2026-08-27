@@ -4,6 +4,8 @@ import android.content.Context
 import androidx.room.Room
 import com.stickerit.app.data.local.StickerDao
 import com.stickerit.app.data.local.StickerDatabase
+import com.stickerit.app.data.local.MIGRATION_1_2
+import com.stickerit.app.data.local.MIGRATION_2_3
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -22,7 +24,7 @@ object DatabaseModule {
             context,
             StickerDatabase::class.java,
             "sticker_it.db",
-        ).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
 
     @Provides
     fun provideStickerDao(db: StickerDatabase): StickerDao = db.stickerDao()

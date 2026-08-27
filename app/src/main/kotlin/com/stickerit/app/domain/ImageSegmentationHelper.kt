@@ -319,6 +319,38 @@ class ImageSegmentationHelper @Inject constructor(
         return updated
     }
 
+    /**
+     * Builds a same-size transparent-black overlay that dims the area outside
+     * the current selection while editing. Keeping this aligned to the source
+     * bitmap lets the editor show the exact live mask rather than the cropped
+     * 512px sticker preview.
+     */
+    fun buildSelectionDimBitmap(
+        confidenceMask: FloatArray,
+        maskWidth: Int,
+        maskHeight: Int,
+        threshold: Float = 0.5f,
+    ): Bitmap {
+        val pixelCount = maskWidth * maskHeight
+        val safeMask = if (confidenceMask.size >= pixelCount) {
+            confidenceMask
+        } else {
+            confidenceMask.copyOf(pixelCount)
+        }
+        val pixels = IntArray(pixelCount)
+        val maxDimAlpha = 0xB0
+
+        for (index in pixels.indices) {
+            val selectedStrength = ((safeMask[index] - threshold) / 0.1f).coerceIn(0f, 1f)
+            val dimAlpha = ((1f - selectedStrength) * maxDimAlpha).roundToInt()
+            pixels[index] = dimAlpha shl 24
+        }
+
+        return Bitmap.createBitmap(maskWidth, maskHeight, Bitmap.Config.ARGB_8888).also {
+            it.setPixels(pixels, 0, maskWidth, 0, 0, maskWidth, maskHeight)
+        }
+    }
+
     /** Fills the rasterised interior of a closed, normalised brush path. */
     private fun fillClosedPath(
         mask: FloatArray,

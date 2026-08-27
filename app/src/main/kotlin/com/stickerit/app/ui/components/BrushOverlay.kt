@@ -5,14 +5,20 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.dp
 import com.stickerit.app.data.model.BrushMode
+import com.stickerit.app.R
 
 /**
  * A transparent canvas overlay that captures brush gestures and draws only
@@ -28,20 +34,29 @@ fun BrushOverlay(
     onDragStart: (normX: Float, normY: Float) -> Unit,
     onDrag: (normX: Float, normY: Float) -> Unit,
     onDragEnd: () -> Unit,
+    onCursorPositionChange: (Offset?) -> Unit,
 ) {
     var canvasSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
     val activeStroke = remember { mutableStateListOf<Offset>() }
 
     val includeStrokeColour = Color(0xCC00C864)
     val excludeStrokeColour = Color(0xCCFF3B30)
+    val canvasDescription = stringResource(
+        if (brushMode == BrushMode.INCLUDE) R.string.brush_canvas_include else R.string.brush_canvas_exclude,
+    )
 
     Canvas(
         modifier = modifier
+            .onSizeChanged { size ->
+                canvasSize = Size(size.width.toFloat(), size.height.toFloat())
+            }
+            .semantics { contentDescription = canvasDescription }
             .pointerInput(brushMode, brushRadius) {
                 detectDragGestures(
                     onDragStart = { offset ->
                         activeStroke.clear()
                         activeStroke.add(offset)
+                        onCursorPositionChange(offset)
                         if (canvasSize != androidx.compose.ui.geometry.Size.Zero) {
                             onDragStart(
                                 offset.x / canvasSize.width,
@@ -52,6 +67,7 @@ fun BrushOverlay(
                     onDrag = { change, _ ->
                         val pos = change.position
                         activeStroke.add(pos)
+                        onCursorPositionChange(pos)
                         if (canvasSize != androidx.compose.ui.geometry.Size.Zero) {
                             onDrag(
                                 pos.x / canvasSize.width,
@@ -61,17 +77,17 @@ fun BrushOverlay(
                     },
                     onDragEnd = {
                         activeStroke.clear()
+                        onCursorPositionChange(null)
                         onDragEnd()
                     },
                     onDragCancel = {
                         activeStroke.clear()
+                        onCursorPositionChange(null)
                         onDragEnd()
                     }
                 )
             }
     ) {
-        canvasSize = size
-
         // Draw active stroke
         val activeColour = if (brushMode == BrushMode.INCLUDE) includeStrokeColour else excludeStrokeColour
         if (activeStroke.size == 1) {

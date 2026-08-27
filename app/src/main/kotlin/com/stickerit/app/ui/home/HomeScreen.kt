@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AddPhotoAlternate
 import androidx.compose.material.icons.outlined.Collections
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -22,19 +23,21 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.stickerit.app.R
 
 @Composable
 fun HomeScreen(
-    onPickImage: (Uri) -> Unit,
+    onPickImages: (List<Uri>) -> Unit,
     onOpenGallery: () -> Unit,
+    onOpenSettings: () -> Unit,
 ) {
     val imagePicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickVisualMedia()
-    ) { uri: Uri? ->
-        uri?.let(onPickImage)
+        contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 30)
+    ) { uris: List<Uri> ->
+        if (uris.isNotEmpty()) onPickImages(uris)
     }
 
     var fabPressed by remember { mutableStateOf(false) }
@@ -47,6 +50,7 @@ fun HomeScreen(
     Scaffold(
         modifier = Modifier.fillMaxSize(),
         containerColor = Color.Transparent,
+        contentWindowInsets = WindowInsets.safeDrawing,
     ) { padding ->
         Box(
             modifier = Modifier
@@ -61,6 +65,18 @@ fun HomeScreen(
                 )
                 .padding(padding),
         ) {
+            IconButton(
+                onClick = onOpenSettings,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(8.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Settings,
+                    contentDescription = stringResource(R.string.settings),
+                )
+            }
+
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -72,7 +88,7 @@ fun HomeScreen(
                 // Use the full brand artwork here; the launcher variant omits the decorative dashes.
                 Image(
                     painter = painterResource(R.drawable.ic_launcher_art),
-                    contentDescription = "Sticker It app icon",
+                    contentDescription = stringResource(R.string.app_icon_description),
                     modifier = Modifier.size(120.dp),
                     contentScale = ContentScale.Fit,
                 )
@@ -80,7 +96,7 @@ fun HomeScreen(
                 Spacer(modifier = Modifier.height(32.dp))
 
                 Text(
-                    text = "Sticker It",
+                    text = stringResource(R.string.app_name),
                     style = MaterialTheme.typography.displayMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                 )
@@ -88,7 +104,7 @@ fun HomeScreen(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
-                    text = "Turn any photo into a sticker\nfor your library and WhatsApp",
+                    text = stringResource(R.string.home_tagline),
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -122,7 +138,7 @@ fun HomeScreen(
                     )
                     Spacer(modifier = Modifier.width(12.dp))
                     Text(
-                        text = "Pick a Photo",
+                        text = stringResource(R.string.pick_a_photo),
                         style = MaterialTheme.typography.titleMedium,
                     )
                 }
@@ -144,7 +160,7 @@ fun HomeScreen(
                     )
                     Spacer(modifier = Modifier.width(12.dp))
                     Text(
-                        text = "My Stickers",
+                        text = stringResource(R.string.my_stickers),
                         style = MaterialTheme.typography.titleMedium,
                     )
                 }
