@@ -5,7 +5,7 @@
 [![Android CI](https://github.com/YOUR_USERNAME/StickerIt/actions/workflows/build.yml/badge.svg)](https://github.com/YOUR_USERNAME/StickerIt/actions)
 ![Min SDK](https://img.shields.io/badge/minSdk-26-green)
 ![Target SDK](https://img.shields.io/badge/targetSdk-36-blue)
-![Kotlin](https://img.shields.io/badge/Kotlin-2.1.0-purple)
+![Kotlin](https://img.shields.io/badge/Kotlin-2.2.10-purple)
 ![Compose](https://img.shields.io/badge/Compose-BOM%202025.01-blueviolet)
 
 ---
