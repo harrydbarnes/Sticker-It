@@ -14,6 +14,7 @@ import com.stickerit.app.domain.ImageSegmentationHelper
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -79,10 +80,19 @@ class StickerEditorViewModel @Inject constructor(
                 subjects = result.subjects
 
                 val preview = buildPreview()
+                if (result.detectionMessage != null) {
+                    _brushState.update { it.copy(mode = BrushMode.INCLUDE) }
+                }
                 _uiState.value = EditorUiState.SegmentationReady(
                     originalBitmap = result.original,
-                    maskBitmap = buildMaskOverlay(),
                     previewBitmap = preview,
+                    detectionMessage = result.detectionMessage,
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: OutOfMemoryError) {
+                _uiState.value = EditorUiState.Error(
+                    "This image is too large to process. Please choose a smaller photo."
                 )
             } catch (e: Exception) {
                 val msg = e.message ?: ""
@@ -186,7 +196,6 @@ class StickerEditorViewModel @Inject constructor(
             val current = _uiState.value
             if (current is EditorUiState.SegmentationReady) {
                 _uiState.value = current.copy(
-                    maskBitmap = buildMaskOverlay(),
                     previewBitmap = buildPreview(),
                 )
             }
@@ -310,18 +319,4 @@ class StickerEditorViewModel @Inject constructor(
         )
     }
 
-    private suspend fun buildMaskOverlay(): Bitmap = withContext(Dispatchers.Default) {
-        // Build a semi-transparent overlay showing included (green) / excluded (red) areas
-        val mask = confidenceMask ?: return@withContext Bitmap.createBitmap(maskWidth, maskHeight, Bitmap.Config.ARGB_8888)
-        val overlay = Bitmap.createBitmap(maskWidth, maskHeight, Bitmap.Config.ARGB_8888)
-        val pixels = IntArray(maskWidth * maskHeight)
-        for (i in pixels.indices) {
-            pixels[i] = if (mask[i] >= 0.5f)
-                android.graphics.Color.argb(100, 0, 200, 100)
-            else
-                android.graphics.Color.argb(100, 200, 0, 50)
-        }
-        overlay.setPixels(pixels, 0, maskWidth, 0, 0, maskWidth, maskHeight)
-        overlay
-    }
 }

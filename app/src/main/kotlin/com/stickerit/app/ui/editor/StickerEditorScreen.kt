@@ -109,6 +109,7 @@ fun StickerEditorScreen(
                         showPreview = showPreviewMode,
                         brushMode = brushState.mode,
                         brushRadius = brushState.radius,
+                        detectionMessage = state.detectionMessage,
                         onDragStart = viewModel::onBrushDragStart,
                         onDrag = viewModel::onBrushDrag,
                         onDragEnd = viewModel::onBrushDragEnd,
@@ -164,6 +165,7 @@ private fun EditorCanvas(
     showPreview: Boolean,
     brushMode: BrushMode,
     brushRadius: Float,
+    detectionMessage: String?,
     onDragStart: (Float, Float) -> Unit,
     onDrag: (Float, Float) -> Unit,
     onDragEnd: () -> Unit,
@@ -249,6 +251,25 @@ private fun EditorCanvas(
                     onDrag = onDrag,
                     onDragEnd = onDragEnd,
                 )
+            }
+
+            if (detectionMessage != null && !showPreview) {
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    shape = MaterialTheme.shapes.large,
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    tonalElevation = 2.dp,
+                ) {
+                    Text(
+                        text = detectionMessage,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        textAlign = TextAlign.Center,
+                    )
+                }
             }
         }
     }

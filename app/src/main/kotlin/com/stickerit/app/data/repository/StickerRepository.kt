@@ -35,7 +35,7 @@ class StickerRepository @Inject constructor(
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
             val options = BitmapFactory.Options().apply {
                 inPreferredConfig = Bitmap.Config.ARGB_8888
-                inSampleSize = calculateInSampleSize(bounds.outWidth, bounds.outHeight, 2048)
+                inSampleSize = calculateInSampleSize(bounds.outWidth, bounds.outHeight, 1080)
             }
             resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
         }.getOrNull()

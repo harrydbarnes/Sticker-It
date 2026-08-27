@@ -5,6 +5,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PointF
+import android.os.Build
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.segmentation.subject.SubjectSegmentation
 import com.google.mlkit.vision.segmentation.subject.SubjectSegmenterOptions
@@ -15,6 +16,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlin.math.min
 
 /**
  * Wraps ML Kit's Subject Segmentation API.
@@ -28,6 +30,11 @@ class ImageSegmentationHelper @Inject constructor() {
 
     companion object {
         private const val MIN_SUBJECT_CONFIDENCE_FOR_TAP = 0.5f
+        private const val MAX_SUPPORTED_ANDROID_API_FOR_ML_KIT = 35
+
+        const val MANUAL_SELECTION_MESSAGE =
+            "Automatic subject detection is unavailable on Android 16 and newer. " +
+                "Select Include and paint over the subject manually."
     }
 
     private val segmenter by lazy {
@@ -52,6 +59,8 @@ class ImageSegmentationHelper @Inject constructor() {
         val maskHeight: Int,
         /** List of available subjects found in the image */
         val subjects: List<com.google.mlkit.vision.segmentation.subject.Subject> = emptyList(),
+        /** Non-null when the editor should explain a safe fallback mode. */
+        val detectionMessage: String? = null,
     )
 
     /**
@@ -60,8 +69,23 @@ class ImageSegmentationHelper @Inject constructor() {
      * @param bitmap source image — must be ARGB_8888; will be scaled if too large.
      */
     suspend fun segment(bitmap: Bitmap): SegmentationResult = withContext(Dispatchers.Default) {
+        val prepared = prepareBitmap(bitmap)
+
         // Scale down very large images to keep ML Kit processing fast
-        val scaled = scaleBitmapIfNeeded(bitmap, maxDim = 1080)
+        val scaled = scaleBitmapIfNeeded(prepared, maxDim = 1080)
+
+        // The current Play-services Subject Segmentation beta has a known fatal
+        // native crash on Android 16+ arm64 devices. This must be gated before the
+        // segmenter is first touched because the native crash cannot be caught in Kotlin.
+        if (Build.VERSION.SDK_INT > MAX_SUPPORTED_ANDROID_API_FOR_ML_KIT) {
+            return@withContext SegmentationResult(
+                original = scaled,
+                confidenceMask = FloatArray(scaled.width * scaled.height),
+                maskWidth = scaled.width,
+                maskHeight = scaled.height,
+                detectionMessage = MANUAL_SELECTION_MESSAGE,
+            )
+        }
 
         val image = InputImage.fromBitmap(scaled, 0)
 
@@ -69,7 +93,7 @@ class ImageSegmentationHelper @Inject constructor() {
             segmenter.process(image)
                 .addOnSuccessListener { result ->
                     val maskBuffer = result.foregroundConfidenceMask
-                    val mask = maskBuffer?.toFloatArray()
+                    val mask = maskBuffer?.toFloatArray(scaled.width * scaled.height)
                         ?: FloatArray(scaled.width * scaled.height) { 0f }
                     cont.resume(
                         SegmentationResult(
@@ -85,10 +109,14 @@ class ImageSegmentationHelper @Inject constructor() {
         }
     }
 
-    private fun java.nio.FloatBuffer.toFloatArray(): FloatArray {
-        val arr = FloatArray(this.capacity())
-        this.rewind()
-        this.get(arr)
+    private fun java.nio.FloatBuffer.toFloatArray(expectedSize: Int): FloatArray {
+        // ML Kit has returned padded masks for some image dimensions. Read only
+        // the pixels the editor can safely address and pad short buffers instead
+        // of allowing a callback-time BufferUnderflow/IndexOutOfBounds crash.
+        val arr = FloatArray(expectedSize)
+        val copy = duplicate().apply { rewind() }
+        val count = min(copy.remaining(), expectedSize)
+        copy.get(arr, 0, count)
         return arr
     }
 
@@ -113,7 +141,8 @@ class ImageSegmentationHelper @Inject constructor() {
         val index = localY * subject.width + localX
 
         // FloatBuffer.get(index) returns the float at the specified absolute index
-        return buffer.get(index) > MIN_SUBJECT_CONFIDENCE_FOR_TAP
+        return index in 0 until buffer.limit() &&
+            buffer.get(index) > MIN_SUBJECT_CONFIDENCE_FOR_TAP
     }
 
     /**
@@ -166,6 +195,7 @@ class ImageSegmentationHelper @Inject constructor() {
                     val startY = subject.startY
                     val subjectWidth = subject.width
                     val subjectHeight = subject.height
+                    val availableMaskValues = buffer.limit()
 
                     for (y in 0 until subjectHeight) {
                         val imgY = startY + y
@@ -174,7 +204,9 @@ class ImageSegmentationHelper @Inject constructor() {
                             val imgX = startX + x
                             if (imgX < 0 || imgX >= maskWidth) continue
 
-                            val subjectVal = buffer.get(y * subjectWidth + x)
+                            val subjectIndex = y * subjectWidth + x
+                            if (subjectIndex >= availableMaskValues) continue
+                            val subjectVal = buffer.get(subjectIndex)
                             val updatedIdx = imgY * maskWidth + imgX
                             if (stroke.include) {
                                 updated[updatedIdx] = maxOf(updated[updatedIdx], subjectVal)
@@ -202,14 +234,21 @@ class ImageSegmentationHelper @Inject constructor() {
         threshold: Float = 0.5f,
         outputSize: Int = 512,
     ): Bitmap {
+        val pixelCount = maskWidth * maskHeight
+        val safeMask = if (confidenceMask.size >= pixelCount) {
+            confidenceMask
+        } else {
+            confidenceMask.copyOf(pixelCount)
+        }
+
         // Scale mask back to original dimensions if needed
         val sticker = Bitmap.createBitmap(maskWidth, maskHeight, Bitmap.Config.ARGB_8888)
-        val pixels = IntArray(maskWidth * maskHeight)
-        val originalPixels = IntArray(maskWidth * maskHeight)
+        val pixels = IntArray(pixelCount)
+        val originalPixels = IntArray(pixelCount)
         original.getPixels(originalPixels, 0, maskWidth, 0, 0, maskWidth, maskHeight)
 
         for (i in pixels.indices) {
-            val conf = confidenceMask[i]
+            val conf = safeMask[i]
             val alpha = when {
                 conf >= threshold -> {
                     // Soft feather near the threshold boundary
@@ -243,6 +282,12 @@ class ImageSegmentationHelper @Inject constructor() {
     // -----------------------------------------------------------------------
     // Private helpers
     // -----------------------------------------------------------------------
+
+    private fun prepareBitmap(bitmap: Bitmap): Bitmap {
+        if (bitmap.config == Bitmap.Config.ARGB_8888) return bitmap
+        return bitmap.copy(Bitmap.Config.ARGB_8888, false)
+            ?: error("Could not convert image to a supported format")
+    }
 
     private fun scaleBitmapIfNeeded(bitmap: Bitmap, maxDim: Int): Bitmap {
         val max = maxOf(bitmap.width, bitmap.height)
