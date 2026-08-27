@@ -70,7 +70,6 @@ sealed interface EditorUiState {
     data class SegmentationReady(
         val originalBitmap: android.graphics.Bitmap,
         val previewBitmap: android.graphics.Bitmap,
-        val detectionMessage: String? = null,
     ) : EditorUiState
     data class Error(val message: String) : EditorUiState
     data object Saved : EditorUiState

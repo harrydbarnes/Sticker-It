@@ -1,10 +1,7 @@
 package com.stickerit.app.ui.editor
 
-import androidx.compose.ui.platform.LocalDensity
 import android.net.Uri
 import androidx.compose.animation.*
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -25,9 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -109,7 +104,6 @@ fun StickerEditorScreen(
                         showPreview = showPreviewMode,
                         brushMode = brushState.mode,
                         brushRadius = brushState.radius,
-                        detectionMessage = state.detectionMessage,
                         onDragStart = viewModel::onBrushDragStart,
                         onDrag = viewModel::onBrushDrag,
                         onDragEnd = viewModel::onBrushDragEnd,
@@ -165,14 +159,10 @@ private fun EditorCanvas(
     showPreview: Boolean,
     brushMode: BrushMode,
     brushRadius: Float,
-    detectionMessage: String?,
     onDragStart: (Float, Float) -> Unit,
     onDrag: (Float, Float) -> Unit,
     onDragEnd: () -> Unit,
 ) {
-    var imageSize by remember { mutableStateOf(IntSize.Zero) }
-    val density = LocalDensity.current
-
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -199,12 +189,10 @@ private fun EditorCanvas(
                 .padding(16.dp),
             contentAlignment = Alignment.Center,
         ) {
-            // Original image (slightly dimmed when in brush mode)
-            val imageAlpha by animateFloatAsState(
-                targetValue = if (showPreview) 0f else 0.5f,
-                animationSpec = tween(250),
-                label = "imageAlpha",
-            )
+            // Editing shows the source image at full strength so the user can
+            // see exactly where the brush is being placed. Preview mode shows
+            // the generated sticker on its own; layering both images here made
+            // the subject appear doubled.
             if (!showPreview) {
                 Image(
                     bitmap = state.originalBitmap.asImageBitmap(),
@@ -214,28 +202,19 @@ private fun EditorCanvas(
                         .aspectRatio(
                             state.originalBitmap.width.toFloat() / state.originalBitmap.height,
                             matchHeightConstraintsFirst = false,
-                        )
-                        .alpha(imageAlpha)
-                        .onSizeChanged { imageSize = it },
+                        ),
+                    contentScale = ContentScale.Fit,
+                )
+            } else {
+                Image(
+                    bitmap = state.previewBitmap.asImageBitmap(),
+                    contentDescription = "Sticker preview",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(1f),
                     contentScale = ContentScale.Fit,
                 )
             }
-
-            // Preview / sticker bitmap
-            val previewAlpha by animateFloatAsState(
-                targetValue = if (showPreview) 1f else 0.9f,
-                animationSpec = tween(250),
-                label = "previewAlpha",
-            )
-            Image(
-                bitmap = state.previewBitmap.asImageBitmap(),
-                contentDescription = "Sticker preview",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(1f)
-                    .alpha(previewAlpha),
-                contentScale = ContentScale.Fit,
-            )
 
             // Brush overlay (only when not in preview mode)
             if (!showPreview) {
@@ -253,24 +232,6 @@ private fun EditorCanvas(
                 )
             }
 
-            if (detectionMessage != null && !showPreview) {
-                Surface(
-                    modifier = Modifier
-                        .align(Alignment.TopCenter)
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                    shape = MaterialTheme.shapes.large,
-                    color = MaterialTheme.colorScheme.secondaryContainer,
-                    tonalElevation = 2.dp,
-                ) {
-                    Text(
-                        text = detectionMessage,
-                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                        textAlign = TextAlign.Center,
-                    )
-                }
-            }
         }
     }
 }
@@ -326,9 +287,16 @@ private fun EditorBottomBar(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .navigationBarsPadding()
                 .padding(horizontal = 20.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            Text(
+                text = "Brush over an area, or close a loop to fill inside it.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
             // Include / Exclude toggle
             Row(
                 modifier = Modifier.fillMaxWidth(),

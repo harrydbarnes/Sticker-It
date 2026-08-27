@@ -1,40 +1,53 @@
 package com.stickerit.app.domain
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PointF
+import android.graphics.Rect
+import android.graphics.Region
+import android.graphics.RegionIterator
 import android.os.Build
+import com.google.mediapipe.framework.image.BitmapImageBuilder
+import com.google.mediapipe.framework.image.ByteBufferExtractor
+import com.google.mediapipe.tasks.core.BaseOptions
+import com.google.mediapipe.tasks.core.Delegate
+import com.google.mediapipe.tasks.vision.core.RunningMode
+import com.google.mediapipe.tasks.vision.imagesegmenter.ImageSegmenter
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.segmentation.subject.SubjectSegmentation
 import com.google.mlkit.vision.segmentation.subject.SubjectSegmenterOptions
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import java.nio.ByteBuffer
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 /**
- * Wraps ML Kit's Subject Segmentation API.
+ * Wraps the app's on-device segmentation implementations.
  *
  * Returns a float confidence mask (0..1 per pixel) that represents how likely
  * each pixel belongs to the primary subject.  The caller can then threshold
  * this to produce a binary mask, or use the raw floats for soft-edge blending.
  */
 @Singleton
-class ImageSegmentationHelper @Inject constructor() {
+class ImageSegmentationHelper @Inject constructor(
+    @ApplicationContext private val context: Context,
+) {
 
     companion object {
         private const val MIN_SUBJECT_CONFIDENCE_FOR_TAP = 0.5f
         private const val MAX_SUPPORTED_ANDROID_API_FOR_ML_KIT = 35
-
-        const val MANUAL_SELECTION_MESSAGE =
-            "Automatic subject detection is unavailable on Android 16 and newer. " +
-                "Select Include and paint over the subject manually."
+        private const val MEDIAPIPE_MODEL_ASSET = "deeplabv3.tflite"
+        private const val BACKGROUND_CATEGORY = 0
     }
 
     private val segmenter by lazy {
@@ -50,6 +63,27 @@ class ImageSegmentationHelper @Inject constructor() {
         )
     }
 
+    /**
+     * MediaPipe is deliberately configured for the CPU delegate. The Android 16
+     * fallback must not initialize the ML Kit native graph that can crash before
+     * Kotlin has a chance to handle an exception.
+     */
+    private val mediaPipeSegmenter by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        val baseOptions = BaseOptions.builder()
+            .setModelAssetPath(MEDIAPIPE_MODEL_ASSET)
+            .setDelegate(Delegate.CPU)
+            .build()
+        val options = ImageSegmenter.ImageSegmenterOptions.builder()
+            .setBaseOptions(baseOptions)
+            .setRunningMode(RunningMode.IMAGE)
+            .setOutputCategoryMask(true)
+            .setOutputConfidenceMasks(false)
+            .build()
+        ImageSegmenter.createFromOptions(context, options)
+    }
+
+    private val mediaPipeLock = Any()
+
     data class SegmentationResult(
         /** The original bitmap passed in */
         val original: Bitmap,
@@ -59,8 +93,6 @@ class ImageSegmentationHelper @Inject constructor() {
         val maskHeight: Int,
         /** List of available subjects found in the image */
         val subjects: List<com.google.mlkit.vision.segmentation.subject.Subject> = emptyList(),
-        /** Non-null when the editor should explain a safe fallback mode. */
-        val detectionMessage: String? = null,
     )
 
     /**
@@ -71,42 +103,97 @@ class ImageSegmentationHelper @Inject constructor() {
     suspend fun segment(bitmap: Bitmap): SegmentationResult = withContext(Dispatchers.Default) {
         val prepared = prepareBitmap(bitmap)
 
-        // Scale down very large images to keep ML Kit processing fast
+        // Scale down very large images to keep either segmenter fast and memory-safe.
         val scaled = scaleBitmapIfNeeded(prepared, maxDim = 1080)
 
-        // The current Play-services Subject Segmentation beta has a known fatal
-        // native crash on Android 16+ arm64 devices. This must be gated before the
-        // segmenter is first touched because the native crash cannot be caught in Kotlin.
         if (Build.VERSION.SDK_INT > MAX_SUPPORTED_ANDROID_API_FOR_ML_KIT) {
-            return@withContext SegmentationResult(
-                original = scaled,
-                confidenceMask = FloatArray(scaled.width * scaled.height),
-                maskWidth = scaled.width,
-                maskHeight = scaled.height,
-                detectionMessage = MANUAL_SELECTION_MESSAGE,
-            )
+            return@withContext segmentWithMediaPipe(scaled)
         }
 
-        val image = InputImage.fromBitmap(scaled, 0)
+        segmentWithMlKit(scaled)
+    }
 
-        suspendCancellableCoroutine { cont ->
+    private suspend fun segmentWithMlKit(bitmap: Bitmap): SegmentationResult {
+        val image = InputImage.fromBitmap(bitmap, 0)
+
+        return suspendCancellableCoroutine { cont ->
             segmenter.process(image)
                 .addOnSuccessListener { result ->
                     val maskBuffer = result.foregroundConfidenceMask
-                    val mask = maskBuffer?.toFloatArray(scaled.width * scaled.height)
-                        ?: FloatArray(scaled.width * scaled.height) { 0f }
+                    val mask = maskBuffer?.toFloatArray(bitmap.width * bitmap.height)
+                        ?: FloatArray(bitmap.width * bitmap.height)
                     cont.resume(
                         SegmentationResult(
-                            original = scaled,
+                            original = bitmap,
                             confidenceMask = mask,
-                            maskWidth = scaled.width,
-                            maskHeight = scaled.height,
+                            maskWidth = bitmap.width,
+                            maskHeight = bitmap.height,
                             subjects = result.subjects,
                         )
                     )
                 }
                 .addOnFailureListener { cont.resumeWithException(it) }
         }
+    }
+
+    private fun segmentWithMediaPipe(bitmap: Bitmap): SegmentationResult =
+        synchronized(mediaPipeLock) {
+            val mpImage = BitmapImageBuilder(bitmap).build()
+            val result = mediaPipeSegmenter.segment(mpImage)
+            val categoryMask = result.categoryMask().orElse(null)
+                ?: error("MediaPipe returned no category mask")
+            val maskBuffer = ByteBufferExtractor.extract(categoryMask)
+            val confidenceMask = categoryMaskToConfidenceMask(
+                buffer = maskBuffer,
+                sourceWidth = categoryMask.width,
+                sourceHeight = categoryMask.height,
+                targetWidth = bitmap.width,
+                targetHeight = bitmap.height,
+            )
+
+            SegmentationResult(
+                original = bitmap,
+                confidenceMask = confidenceMask,
+                maskWidth = bitmap.width,
+                maskHeight = bitmap.height,
+            )
+        }
+
+    /**
+     * MediaPipe's category output is one unsigned byte per pixel. DeepLab V3
+     * reserves category 0 for background; every other category is a foreground
+     * object that can be retained in a sticker. The task normally returns the
+     * input dimensions, but resampling here keeps the editor safe if a model or
+     * runtime returns a lower-resolution mask.
+     */
+    private fun categoryMaskToConfidenceMask(
+        buffer: ByteBuffer,
+        sourceWidth: Int,
+        sourceHeight: Int,
+        targetWidth: Int,
+        targetHeight: Int,
+    ): FloatArray {
+        require(sourceWidth > 0 && sourceHeight > 0) { "Invalid MediaPipe mask dimensions" }
+
+        val sourcePixelCount = sourceWidth * sourceHeight
+        val copy = buffer.duplicate().apply { rewind() }
+        val available = min(copy.remaining(), sourcePixelCount)
+        val categories = ByteArray(available)
+        copy.get(categories)
+        val mask = FloatArray(targetWidth * targetHeight)
+
+        for (y in 0 until targetHeight) {
+            val sourceY = (y * sourceHeight / targetHeight).coerceIn(0, sourceHeight - 1)
+            for (x in 0 until targetWidth) {
+                val sourceX = (x * sourceWidth / targetWidth).coerceIn(0, sourceWidth - 1)
+                val sourceIndex = sourceY * sourceWidth + sourceX
+                val category = categories.getOrNull(sourceIndex)?.toInt()?.and(0xFF)
+                    ?: BACKGROUND_CATEGORY
+                mask[y * targetWidth + x] =
+                    if (category == BACKGROUND_CATEGORY) 0f else 1f
+            }
+        }
+        return mask
     }
 
     private fun java.nio.FloatBuffer.toFloatArray(expectedSize: Int): FloatArray {
@@ -149,7 +236,9 @@ class ImageSegmentationHelper @Inject constructor() {
      * Apply brush strokes from [brushStrokes] on top of [confidenceMask].
      *
      * Each stroke is a [BrushStroke] — either INCLUDE (set mask to 1) or
-     * EXCLUDE (set mask to 0) — applied as filled circles at each point.
+     * EXCLUDE (set mask to 0). A closed stroke also fills the enclosed
+     * polygon, so outlining an object selects the area inside it rather than
+     * only the brush-width line.
      *
      * Returns a new FloatArray representing the updated mask.
      */
@@ -187,6 +276,15 @@ class ImageSegmentationHelper @Inject constructor() {
                             )
                         }
                     }
+                    if (stroke.fillEnclosed) {
+                        fillClosedPath(
+                            mask = updated,
+                            w = maskWidth,
+                            h = maskHeight,
+                            points = points,
+                            value = value,
+                        )
+                    }
                 }
                 is BrushStroke.SubjectFill -> {
                     val subject = stroke.subject
@@ -219,6 +317,43 @@ class ImageSegmentationHelper @Inject constructor() {
             }
         }
         return updated
+    }
+
+    /** Fills the rasterised interior of a closed, normalised brush path. */
+    private fun fillClosedPath(
+        mask: FloatArray,
+        w: Int,
+        h: Int,
+        points: List<PointF>,
+        value: Float,
+    ) {
+        if (points.size < 3 || w <= 0 || h <= 0) return
+
+        val path = Path()
+        points.forEachIndexed { index, point ->
+            val x = (point.x * w).roundToInt().coerceIn(0, w)
+            val y = (point.y * h).roundToInt().coerceIn(0, h)
+            if (index == 0) {
+                path.moveTo(x.toFloat(), y.toFloat())
+            } else {
+                path.lineTo(x.toFloat(), y.toFloat())
+            }
+        }
+        path.close()
+
+        val region = Region()
+        if (!region.setPath(path, Region(0, 0, w, h))) return
+
+        val iterator = RegionIterator(region)
+        val rect = Rect()
+        while (iterator.next(rect)) {
+            for (y in rect.top until rect.bottom) {
+                val rowOffset = y * w
+                for (x in rect.left until rect.right) {
+                    mask[rowOffset + x] = value
+                }
+            }
+        }
     }
 
     /**
@@ -382,6 +517,8 @@ sealed interface BrushStroke {
         val points: List<PointF>,
         /** Brush radius as a fraction of image width */
         val radiusNorm: Float = 0.05f,
+        /** Whether the path should be treated as a closed outline and filled. */
+        val fillEnclosed: Boolean = false,
     ) : BrushStroke
 
     data class SubjectFill(

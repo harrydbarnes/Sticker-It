@@ -1,6 +1,6 @@
 # Sticker It 🎨
 
-> Turn any photo into a transparent sticker — powered by ML Kit Subject Segmentation — then keep it in a private on-device library or add a chosen pack to WhatsApp.
+> Turn any photo into a transparent sticker — powered by on-device subject segmentation — then keep it in a private library or add a chosen pack to WhatsApp.
 
 [![Android CI](https://github.com/YOUR_USERNAME/StickerIt/actions/workflows/build.yml/badge.svg)](https://github.com/YOUR_USERNAME/StickerIt/actions)
 ![Min SDK](https://img.shields.io/badge/minSdk-26-green)
@@ -15,12 +15,12 @@
 ### Create Stickers
 - **Pick any photo** from your gallery via the image picker
 - **Share an image** to Sticker It directly from any other app (Photos, Chrome, WhatsApp, etc.)
-- **Auto-detection** — ML Kit Subject Segmentation isolates the foreground subject automatically with a soft, feathered edge
+- **Auto-detection** — ML Kit Subject Segmentation isolates the foreground subject automatically with a soft, feathered edge; Android 16+ uses the bundled MediaPipe DeepLab V3 CPU path
 
 ### Brush Editor
-- **Include / Exclude brush** — switch modes and paint over the image to add or remove areas from your sticker
+- **Include / Exclude brush** — switch modes and paint over the image to add or remove areas from your sticker; close a loop to fill the area inside it
 - **Variable brush radius** — slider adjusts the stroke width in real time
-- **Live preview** — toggle between edit mode (original + overlay) and preview mode (transparent background)
+- **Live preview** — edit against the original image with a temporary brush guide, then toggle to the generated sticker on a transparent background
 - **Undo** last stroke or **Reset** all edits to rerun segmentation
 
 ### Sticker Gallery
@@ -48,7 +48,7 @@ app/
     │   ├── provider/       StickerContentProvider (WhatsApp), WhatsAppHelper
     │   └── repository/     StickerRepository (single source of truth)
     ├── di/                 Hilt modules (database, app context)
-    ├── domain/             ImageSegmentationHelper (ML Kit wrapper + brush engine)
+    ├── domain/             ImageSegmentationHelper (ML Kit/MediaPipe segmentation + brush engine)
     └── ui/
         ├── NavHost.kt      Compose Navigation host
         ├── components/     Reusable composables (BrushOverlay, BrushCursor)
@@ -65,7 +65,7 @@ app/
 | UI | Jetpack Compose + Material 3 |
 | Navigation | Navigation Compose |
 | DI | Hilt |
-| Image segmentation | ML Kit Subject Segmentation |
+| Image segmentation | ML Kit Subject Segmentation + bundled MediaPipe fallback |
 | Image loading | Coil |
 | Database | Room |
 | Async | Kotlin Coroutines + Flow |
@@ -108,7 +108,7 @@ The debug APK will be at `app/build/outputs/apk/debug/app-debug.apk`.
 
 1. User picks or shares an image
 2. `StickerEditorViewModel.loadAndSegment()` passes the bitmap to `ImageSegmentationHelper`
-3. ML Kit's `SubjectSegmenter` returns a per-pixel confidence float array (0..1)
+3. ML Kit's `SubjectSegmenter` returns a per-pixel confidence float array (0..1) on older Android versions; Android 16+ uses the bundled MediaPipe DeepLab V3 category mask through the CPU delegate
 4. A preview sticker bitmap is built: pixels with confidence >= 0.5 are kept; those on the boundary (0.5..0.6) get a feathered alpha for a smooth edge
 5. The raw confidence mask is kept in memory for brush editing
 
@@ -164,7 +164,7 @@ The encoder lowers WebP quality only as needed to keep photo cut-outs below What
 |---|---|
 | `VIBRATE` | Haptic feedback on long-press in the gallery |
 
-No photo-storage or internet permission is requested. Android's system Photo Picker grants access only to the image the user chooses; all processing is fully on-device.
+No photo-storage or internet permission is requested. Android's system Photo Picker grants access only to the image the user chooses; image processing is fully on-device, with the Android 16+ fallback model bundled in the app.
 
 ---
 

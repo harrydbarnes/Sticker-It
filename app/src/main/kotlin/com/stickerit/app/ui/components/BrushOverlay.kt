@@ -14,16 +14,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
 import com.stickerit.app.data.model.BrushMode
 
-data class VisualStroke(
-    val mode: BrushMode,
-    val points: List<Offset>,
-    val radius: Float,
-)
-
 /**
- * A transparent canvas overlay that captures brush gestures and draws
- * a visual preview of strokes.  Reports normalised (0..1) coordinates
- * back to the ViewModel.
+ * A transparent canvas overlay that captures brush gestures and draws only
+ * the stroke currently being drawn. Reports normalised (0..1) coordinates
+ * back to the ViewModel. Once the gesture ends, the mask preview becomes the
+ * source of truth and the temporary guide is removed.
  */
 @Composable
 fun BrushOverlay(
@@ -36,10 +31,7 @@ fun BrushOverlay(
 ) {
     var canvasSize by remember { mutableStateOf(androidx.compose.ui.geometry.Size.Zero) }
     val activeStroke = remember { mutableStateListOf<Offset>() }
-    val committedStrokes = remember { mutableStateListOf<VisualStroke>() }
 
-    val includeColour = Color(0x6600C864)  // semi-transparent green
-    val excludeColour = Color(0x66FF3B30)  // semi-transparent red
     val includeStrokeColour = Color(0xCC00C864)
     val excludeStrokeColour = Color(0xCCFF3B30)
 
@@ -68,12 +60,7 @@ fun BrushOverlay(
                         }
                     },
                     onDragEnd = {
-                        if (activeStroke.isNotEmpty()) {
-                            committedStrokes.add(
-                                VisualStroke(brushMode, activeStroke.toList(), brushRadius)
-                            )
-                            activeStroke.clear()
-                        }
+                        activeStroke.clear()
                         onDragEnd()
                     },
                     onDragCancel = {
@@ -84,34 +71,6 @@ fun BrushOverlay(
             }
     ) {
         canvasSize = size
-
-        // Draw committed strokes
-        for (stroke in committedStrokes) {
-            val fillColour = if (stroke.mode == BrushMode.INCLUDE) includeColour else excludeColour
-            val strokeColour = if (stroke.mode == BrushMode.INCLUDE) includeStrokeColour else excludeStrokeColour
-
-            if (stroke.points.size == 1) {
-                drawCircle(
-                    color = fillColour,
-                    radius = stroke.radius,
-                    center = stroke.points.first(),
-                )
-            } else {
-                val path = Path().apply {
-                    moveTo(stroke.points.first().x, stroke.points.first().y)
-                    stroke.points.drop(1).forEach { lineTo(it.x, it.y) }
-                }
-                drawPath(
-                    path = path,
-                    color = strokeColour,
-                    style = Stroke(
-                        width = stroke.radius * 2,
-                        cap = StrokeCap.Round,
-                        join = StrokeJoin.Round,
-                    )
-                )
-            }
-        }
 
         // Draw active stroke
         val activeColour = if (brushMode == BrushMode.INCLUDE) includeStrokeColour else excludeStrokeColour

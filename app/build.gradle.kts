@@ -13,8 +13,8 @@ android {
         applicationId = "com.stickerit.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.1.0"
+        versionCode = 3
+        versionName = "1.2.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -54,6 +54,10 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+
+    androidResources {
+        noCompress += "tflite"
+    }
 }
 
 kotlin {
@@ -91,6 +95,9 @@ dependencies {
 
     // ML Kit - Subject Segmentation
     implementation(libs.mlkit.subject.segmentation)
+
+    // Bundled CPU fallback for Android 16+, where the ML Kit beta has a native crash
+    implementation(libs.mediapipe.tasks.vision)
 
     // Image loading
     implementation(libs.coil.compose)

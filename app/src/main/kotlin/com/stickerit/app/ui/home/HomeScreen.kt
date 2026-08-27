@@ -7,12 +7,11 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.EaseOutBack
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AddPhotoAlternate
-import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Collections
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -20,8 +19,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import com.stickerit.app.R
 
 @Composable
 fun HomeScreen(
@@ -43,26 +46,21 @@ fun HomeScreen(
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
+        containerColor = Color.Transparent,
     ) { padding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding),
-        ) {
-            // Background gradient
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
-                                MaterialTheme.colorScheme.surface,
-                            )
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f),
+                            MaterialTheme.colorScheme.surface,
                         )
                     )
-            )
-
+                )
+                .padding(padding),
+        ) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -71,28 +69,13 @@ fun HomeScreen(
                 verticalArrangement = Arrangement.Center,
             ) {
 
-                // App icon / hero area
-                Box(
-                    modifier = Modifier
-                        .size(120.dp)
-                        .background(
-                            brush = Brush.radialGradient(
-                                colors = listOf(
-                                    MaterialTheme.colorScheme.primaryContainer,
-                                    MaterialTheme.colorScheme.secondaryContainer,
-                                )
-                            ),
-                            shape = CircleShape,
-                        ),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.AutoAwesome,
-                        contentDescription = null,
-                        modifier = Modifier.size(56.dp),
-                        tint = MaterialTheme.colorScheme.primary,
-                    )
-                }
+                // Use the full brand artwork here; the launcher variant omits the decorative dashes.
+                Image(
+                    painter = painterResource(R.drawable.ic_launcher_art),
+                    contentDescription = "Sticker It app icon",
+                    modifier = Modifier.size(120.dp),
+                    contentScale = ContentScale.Fit,
+                )
 
                 Spacer(modifier = Modifier.height(32.dp))
 

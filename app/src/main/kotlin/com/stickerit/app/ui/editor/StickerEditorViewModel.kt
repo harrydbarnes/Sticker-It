@@ -29,6 +29,7 @@ class StickerEditorViewModel @Inject constructor(
 
     companion object {
         private const val TAP_DISTANCE_THRESHOLD_NORM = 0.01
+        private const val CLOSED_OUTLINE_DISTANCE_THRESHOLD_NORM = 0.04
     }
 
     // ---------- public state ----------
@@ -80,13 +81,9 @@ class StickerEditorViewModel @Inject constructor(
                 subjects = result.subjects
 
                 val preview = buildPreview()
-                if (result.detectionMessage != null) {
-                    _brushState.update { it.copy(mode = BrushMode.INCLUDE) }
-                }
                 _uiState.value = EditorUiState.SegmentationReady(
                     originalBitmap = result.original,
                     previewBitmap = preview,
-                    detectionMessage = result.detectionMessage,
                 )
             } catch (e: CancellationException) {
                 throw e
@@ -168,6 +165,7 @@ class StickerEditorViewModel @Inject constructor(
                 include = isInclude,
                 points = activeStrokePoints.toList(),
                 radiusNorm = brushState.value.radius / (maskWidth.toFloat().coerceAtLeast(1f)),
+                fillEnclosed = isClosedOutline(activeStrokePoints),
             )
             brushStrokes.add(stroke)
             activeStrokePoints.clear()
@@ -234,6 +232,7 @@ class StickerEditorViewModel @Inject constructor(
             include = brushState.value.mode == BrushMode.INCLUDE,
             points = activeStrokePoints.toList(),
             radiusNorm = brushState.value.radius / (maskWidth.toFloat().coerceAtLeast(1f)),
+            fillEnclosed = isClosedOutline(activeStrokePoints),
         )
         val allStrokes = currentStrokes + currentStroke
 
@@ -302,6 +301,17 @@ class StickerEditorViewModel @Inject constructor(
         committedRenderJob?.cancel()
         previewJob = null
         committedRenderJob = null
+    }
+
+    private fun isClosedOutline(points: List<PointF>): Boolean {
+        if (points.size < 3) return false
+        val first = points.first()
+        val last = points.last()
+        val distance = kotlin.math.hypot(
+            (first.x - last.x).toDouble(),
+            (first.y - last.y).toDouble(),
+        )
+        return distance <= CLOSED_OUTLINE_DISTANCE_THRESHOLD_NORM
     }
 
     override fun onCleared() {
