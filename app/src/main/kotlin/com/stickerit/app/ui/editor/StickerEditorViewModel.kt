@@ -13,6 +13,8 @@ import com.stickerit.app.domain.BrushStroke
 import com.stickerit.app.domain.ImageSegmentationHelper
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -53,10 +55,14 @@ class StickerEditorViewModel @Inject constructor(
 
     // Current active stroke being drawn
     private var activeStrokePoints = mutableListOf<PointF>()
+    private var previewJob: Job? = null
+    private var committedRenderJob: Job? = null
+    private var previewGeneration = 0L
 
     // ---------- public actions ----------
 
     fun loadAndSegment(uri: Uri) {
+        cancelPreviewWork()
         brushStrokes.clear()
         viewModelScope.launch {
             _uiState.value = EditorUiState.Loading
@@ -142,6 +148,7 @@ class StickerEditorViewModel @Inject constructor(
                     )
                     brushStrokes.add(stroke)
                     activeStrokePoints.clear()
+                    cancelPreviewWork()
                     recomputeMaskFromStrokes()
                     return
                 }
@@ -154,17 +161,21 @@ class StickerEditorViewModel @Inject constructor(
             )
             brushStrokes.add(stroke)
             activeStrokePoints.clear()
+            cancelPreviewWork()
+            recomputeMaskFromStrokes()
         }
     }
 
     fun undoLastStroke() {
         if (brushStrokes.isNotEmpty()) {
+            cancelPreviewWork()
             brushStrokes.removeLastOrNull()
             recomputeMaskFromStrokes()
         }
     }
 
     fun resetEdits() {
+        cancelPreviewWork()
         brushStrokes.clear()
         activeStrokePoints.clear()
         val base = baseConfidenceMask ?: return
@@ -187,6 +198,7 @@ class StickerEditorViewModel @Inject constructor(
     }
 
     fun saveSticker() {
+        cancelPreviewWork()
         viewModelScope.launch {
             _uiState.value = EditorUiState.Loading
             try {
@@ -216,7 +228,12 @@ class StickerEditorViewModel @Inject constructor(
         )
         val allStrokes = currentStrokes + currentStroke
 
-        viewModelScope.launch(Dispatchers.Default) {
+        val generation = ++previewGeneration
+        previewJob?.cancel()
+        previewJob = viewModelScope.launch(Dispatchers.Default) {
+            // Conflate pointer events to one preview per visual frame instead of rendering
+            // every raw move event. The final stroke remains precise on drag end.
+            delay(16)
             val base = baseConfidenceMask ?: return@launch
             val updatedMask = segmentationHelper.applyBrushStrokes(
                 confidenceMask = base,
@@ -235,7 +252,7 @@ class StickerEditorViewModel @Inject constructor(
             val current = _uiState.value
             if (current is EditorUiState.SegmentationReady) {
                 withContext(Dispatchers.Main) {
-                    _uiState.value = current.copy(previewBitmap = preview)
+                    if (generation == previewGeneration) _uiState.value = current.copy(previewBitmap = preview)
                 }
             }
         }
@@ -243,7 +260,9 @@ class StickerEditorViewModel @Inject constructor(
 
     private fun recomputeMaskFromStrokes() {
         val currentStrokes = brushStrokes.toList()
-        viewModelScope.launch(Dispatchers.Default) {
+        val generation = ++previewGeneration
+        committedRenderJob?.cancel()
+        committedRenderJob = viewModelScope.launch(Dispatchers.Default) {
             val base = baseConfidenceMask ?: return@launch
             val orig = originalBitmap ?: return@launch
             val updatedMask = segmentationHelper.applyBrushStrokes(
@@ -262,10 +281,23 @@ class StickerEditorViewModel @Inject constructor(
             val current = _uiState.value
             if (current is EditorUiState.SegmentationReady) {
                 withContext(Dispatchers.Main) {
-                    _uiState.value = current.copy(previewBitmap = preview)
+                    if (generation == previewGeneration) _uiState.value = current.copy(previewBitmap = preview)
                 }
             }
         }
+    }
+
+    private fun cancelPreviewWork() {
+        previewGeneration++
+        previewJob?.cancel()
+        committedRenderJob?.cancel()
+        previewJob = null
+        committedRenderJob = null
+    }
+
+    override fun onCleared() {
+        cancelPreviewWork()
+        super.onCleared()
     }
 
     private suspend fun buildPreview(): Bitmap = withContext(Dispatchers.Default) {

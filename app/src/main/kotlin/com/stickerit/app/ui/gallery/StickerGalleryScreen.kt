@@ -1,33 +1,61 @@
 package com.stickerit.app.ui.gallery
 
 import android.content.Intent
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.grid.*
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.StickyNote2
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -36,420 +64,137 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.stickerit.app.data.model.GalleryUiState
 import com.stickerit.app.data.model.Sticker
-import kotlinx.coroutines.launch
 import java.io.File
 
 @Composable
-fun StickerGalleryScreen(
-    onBack: () -> Unit,
-    onEditSticker: (Long) -> Unit,
-    viewModel: StickerGalleryViewModel = hiltViewModel(),
-) {
+fun StickerGalleryScreen(onBack: () -> Unit, viewModel: StickerGalleryViewModel = hiltViewModel()) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
-    val scope = rememberCoroutineScope()
     val context = LocalContext.current
-
-    // Observe snackbar messages
-    LaunchedEffect(Unit) {
-        viewModel.snackbarMessage.collect { msg ->
-            snackbarHostState.showSnackbar(msg)
-        }
-    }
-
-    // Sticker to confirm deletion
+    var selectedIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var deleteTarget by remember { mutableStateOf<Sticker?>(null) }
     var renameTarget by remember { mutableStateOf<Sticker?>(null) }
 
+    LaunchedEffect(Unit) { viewModel.snackbarMessage.collect(snackbarHostState::showSnackbar) }
     Scaffold(
-        topBar = {
-            GalleryTopBar(
-                onBack = onBack,
-                isGboardInstalled = viewModel.isGboardInstalled,
-                onAddToGboard = viewModel::addPackToGboard,
-            )
-        },
+        topBar = { GalleryTopBar(onBack, selectedIds.size, onClear = { selectedIds = emptySet() }, onAddToWhatsApp = {
+            val stickers = (uiState as? GalleryUiState.Ready)?.stickers.orEmpty().filter { it.id in selectedIds }
+            viewModel.addOrUpdateWhatsAppPack(stickers)
+        }) },
         snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { padding ->
         when (val state = uiState) {
-            is GalleryUiState.Loading -> {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    CircularProgressIndicator(strokeCap = androidx.compose.ui.graphics.StrokeCap.Round)
-                }
-            }
-
-            is GalleryUiState.Empty -> {
-                EmptyGallery(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding),
-                    onCreateSticker = onBack,
-                )
-            }
-
-            is GalleryUiState.Ready -> {
-                StickerGrid(
-                    stickers = state.stickers,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding),
-                    onDelete = { deleteTarget = it },
-                    onRename = { renameTarget = it },
-                    onShare = { sticker ->
-                        val intent = viewModel.buildShareIntent(sticker)
-                        context.startActivity(Intent.createChooser(intent, "Share sticker").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                    },
-                    onReorder = viewModel::reorderStickers,
-                )
-            }
+            GalleryUiState.Loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            GalleryUiState.Empty -> EmptyGallery(Modifier.fillMaxSize().padding(padding), onBack)
+            is GalleryUiState.Ready -> StickerGrid(
+                stickers = state.stickers,
+                selectedIds = selectedIds,
+                modifier = Modifier.fillMaxSize().padding(padding),
+                onToggle = { id -> selectedIds = selectedIds.let { if (id in it) it - id else it + id } },
+                onSelectAll = { selectedIds = state.stickers.take(30).mapTo(linkedSetOf()) { it.id } },
+                onShare = { sticker -> context.startActivity(Intent.createChooser(viewModel.buildShareIntent(sticker), "Share sticker")) },
+                onDelete = { deleteTarget = it },
+                onRename = { renameTarget = it },
+            )
         }
     }
-
-    // Delete confirmation dialog
     deleteTarget?.let { sticker ->
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
-            icon = {
-                Icon(Icons.Outlined.Delete, contentDescription = null, tint = MaterialTheme.colorScheme.error)
-            },
-            title = { Text("Delete Sticker?") },
-            text = { Text("\"${sticker.name}\" will be permanently removed.") },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        viewModel.deleteSticker(sticker)
-                        deleteTarget = null
-                    },
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error,
-                    ),
-                ) { Text("Delete") }
-            },
-            dismissButton = {
-                TextButton(onClick = { deleteTarget = null }) { Text("Cancel") }
-            },
-            shape = MaterialTheme.shapes.extraLarge,
+            title = { Text("Delete sticker?") },
+            text = { Text("${sticker.name} will be permanently removed from your library.") },
+            confirmButton = { TextButton(onClick = { viewModel.deleteSticker(sticker); deleteTarget = null }) { Text("Delete") } },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Cancel") } },
         )
     }
-
-    // Rename dialog
-    renameTarget?.let { sticker ->
-        RenameDialog(
-            currentName = sticker.name,
-            onConfirm = { newName ->
-                viewModel.renameSticker(sticker, newName)
-                renameTarget = null
-            },
-            onDismiss = { renameTarget = null },
-        )
-    }
+    renameTarget?.let { sticker -> RenameStickerDialog(
+        sticker = sticker,
+        onDismiss = { renameTarget = null },
+        onRename = { name -> viewModel.renameSticker(sticker, name); renameTarget = null },
+    ) }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun GalleryTopBar(
-    onBack: () -> Unit,
-    isGboardInstalled: Boolean,
-    onAddToGboard: () -> Unit,
-) {
+private fun GalleryTopBar(onBack: () -> Unit, selectionCount: Int, onClear: () -> Unit, onAddToWhatsApp: () -> Unit) {
     TopAppBar(
-        title = { Text("My Stickers") },
-        navigationIcon = {
-            IconButton(onClick = onBack) {
-                Icon(Icons.Outlined.ArrowBackIosNew, contentDescription = "Back")
-            }
-        },
+        title = { Text(if (selectionCount == 0) "My stickers" else "$selectionCount selected") },
+        navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Outlined.ArrowBack, "Back") } },
         actions = {
-            if (isGboardInstalled) {
-                Button(
-                    onClick = onAddToGboard,
+            if (selectionCount > 0) {
+                TextButton(onClick = onClear) { Text("Clear") }
+                FilledTonalButton(
+                    onClick = onAddToWhatsApp,
+                    enabled = selectionCount in 3..30,
                     modifier = Modifier.padding(end = 8.dp),
-                    shape = MaterialTheme.shapes.large,
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                ) {
-                    Icon(
-                        Icons.Outlined.Keyboard,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text("Add to GBoard", style = MaterialTheme.typography.labelLarge)
-                }
+                ) { Text("WhatsApp") }
             }
         },
-        colors = TopAppBarDefaults.topAppBarColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-        ),
+        colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
     )
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun StickerGrid(
-    stickers: List<Sticker>,
-    modifier: Modifier = Modifier,
-    onDelete: (Sticker) -> Unit,
-    onRename: (Sticker) -> Unit,
-    onShare: (Sticker) -> Unit,
-    onReorder: (List<Sticker>) -> Unit,
-) {
-    val haptic = LocalHapticFeedback.current
-    var selectedSticker by remember { mutableStateOf<Sticker?>(null) }
-
-    LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = 120.dp),
-        modifier = modifier,
-        contentPadding = PaddingValues(16.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        items(
-            items = stickers,
-            key = { it.id },
-        ) { sticker ->
-            StickerItem(
-                sticker = sticker,
-                isSelected = selectedSticker?.id == sticker.id,
-                modifier = Modifier.animateItem(),
-                onClick = {
-                    selectedSticker = if (selectedSticker?.id == sticker.id) null else sticker
-                },
-                onLongClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    selectedSticker = sticker
-                },
-                onDelete = { onDelete(sticker) },
-                onRename = { onRename(sticker) },
-                onShare = { onShare(sticker) },
-            )
+private fun StickerGrid(stickers: List<Sticker>, selectedIds: Set<Long>, modifier: Modifier, onToggle: (Long) -> Unit, onSelectAll: () -> Unit, onShare: (Sticker) -> Unit, onDelete: (Sticker) -> Unit, onRename: (Sticker) -> Unit) {
+    LazyVerticalGrid(columns = GridCells.Adaptive(112.dp), modifier = modifier, contentPadding = PaddingValues(16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+            Column {
+                Text("Choose 3–30 stickers, then add or update your WhatsApp pack.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                TextButton(onClick = onSelectAll, modifier = Modifier.padding(top = 2.dp)) { Text("Select first 30") }
+            }
         }
+        items(stickers, key = { it.id }) { sticker -> StickerTile(sticker, sticker.id in selectedIds, { onToggle(sticker.id) }, { onShare(sticker) }, { onDelete(sticker) }, { onRename(sticker) }) }
     }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun StickerItem(
-    sticker: Sticker,
-    isSelected: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit,
-    onDelete: () -> Unit,
-    onRename: () -> Unit,
-    onShare: () -> Unit,
-) {
-    val scale by animateFloatAsState(
-        targetValue = if (isSelected) 0.96f else 1f,
-        label = "itemScale",
-    )
-    val elevation by animateDpAsState(
-        targetValue = if (isSelected) 8.dp else 1.dp,
-        label = "itemElevation",
-    )
-
-    var showMenu by remember { mutableStateOf(false) }
-
-    Box(
-        modifier = modifier.scale(scale),
-    ) {
+private fun StickerTile(sticker: Sticker, selected: Boolean, onToggle: () -> Unit, onShare: () -> Unit, onDelete: () -> Unit, onRename: () -> Unit) {
+    var menuExpanded by remember { mutableStateOf(false) }
+    Column {
         Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(1f)
-                .combinedClickable(
-                    onClick = onClick,
-                    onLongClick = {
-                        onLongClick()
-                        showMenu = true
-                    }
-                )
-                .then(
-                    if (isSelected) Modifier.border(
-                        2.dp,
-                        MaterialTheme.colorScheme.primary,
-                        MaterialTheme.shapes.large,
-                    ) else Modifier
-                ),
+            modifier = Modifier.fillMaxWidth().aspectRatio(1f).combinedClickable(onClick = onToggle, onLongClick = { menuExpanded = true }),
             shape = MaterialTheme.shapes.large,
-            elevation = CardDefaults.cardElevation(defaultElevation = elevation),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant,
-            ),
+            colors = CardDefaults.cardColors(containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainer),
         ) {
-            Box(contentAlignment = Alignment.Center) {
-                // Checkerboard for transparent areas
-                CheckerboardTile(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .clip(MaterialTheme.shapes.large),
-                )
-
-                // Sticker image
-                AsyncImage(
-                    model = File(sticker.filePath),
-                    contentDescription = sticker.name,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(8.dp),
-                    contentScale = ContentScale.Fit,
-                )
-
-                // GBoard badge
-                if (sticker.addedToGboard) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(6.dp)
-                            .size(20.dp)
-                            .background(
-                                color = MaterialTheme.colorScheme.primary,
-                                shape = CircleShape,
-                            ),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            Icons.Outlined.Check,
-                            contentDescription = "Added to GBoard",
-                            tint = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.size(12.dp),
-                        )
-                    }
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Checkerboard(Modifier.fillMaxSize().clip(MaterialTheme.shapes.large))
+                AsyncImage(File(sticker.filePath), sticker.name, Modifier.fillMaxSize().padding(8.dp), contentScale = ContentScale.Fit)
+                if (selected) Icon(Icons.Outlined.CheckCircle, "Selected", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp))
+                IconButton(onClick = { menuExpanded = true }, modifier = Modifier.align(Alignment.BottomEnd)) { Icon(Icons.Outlined.MoreVert, "More options") }
+                DropdownMenu(menuExpanded, { menuExpanded = false }) {
+                    DropdownMenuItem(text = { Text("Rename") }, leadingIcon = { Icon(Icons.Outlined.Edit, null) }, onClick = { menuExpanded = false; onRename() })
+                    DropdownMenuItem(text = { Text("Share") }, leadingIcon = { Icon(Icons.Outlined.Share, null) }, onClick = { menuExpanded = false; onShare() })
+                    DropdownMenuItem(text = { Text("Delete") }, leadingIcon = { Icon(Icons.Outlined.Delete, null) }, onClick = { menuExpanded = false; onDelete() })
                 }
             }
         }
-
-        // Sticker name
-        Text(
-            text = sticker.name,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 4.dp, start = 4.dp, end = 4.dp)
-                .align(Alignment.BottomCenter)
-                .offset(y = 20.dp),
-            textAlign = TextAlign.Center,
-        )
-
-        // Context menu
-        DropdownMenu(
-            expanded = showMenu,
-            onDismissRequest = { showMenu = false },
-            shape = MaterialTheme.shapes.large,
-        ) {
-            DropdownMenuItem(
-                text = { Text("Rename") },
-                leadingIcon = { Icon(Icons.Outlined.Edit, null) },
-                onClick = { showMenu = false; onRename() },
-            )
-            DropdownMenuItem(
-                text = { Text("Share") },
-                leadingIcon = { Icon(Icons.Outlined.Share, null) },
-                onClick = { showMenu = false; onShare() },
-            )
-            HorizontalDivider()
-            DropdownMenuItem(
-                text = { Text("Delete", color = MaterialTheme.colorScheme.error) },
-                leadingIcon = {
-                    Icon(
-                        Icons.Outlined.Delete,
-                        null,
-                        tint = MaterialTheme.colorScheme.error,
-                    )
-                },
-                onClick = { showMenu = false; onDelete() },
-            )
-        }
+        Text(sticker.name, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center, style = MaterialTheme.typography.labelMedium, modifier = Modifier.fillMaxWidth().padding(top = 4.dp))
     }
 }
 
 @Composable
-private fun EmptyGallery(
-    modifier: Modifier = Modifier,
-    onCreateSticker: () -> Unit = {},
-) {
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        Icon(
-            imageVector = Icons.Outlined.SentimentDissatisfied,
-            contentDescription = null,
-            modifier = Modifier.size(72.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-        )
-        Spacer(Modifier.height(16.dp))
-        Text(
-            text = "No stickers yet",
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            text = "Go back and create your first sticker!",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-        )
-        Spacer(Modifier.height(24.dp))
-        Button(onClick = onCreateSticker) {
-            Text("Create Sticker")
-        }
-    }
-}
-
-@Composable
-private fun RenameDialog(
-    currentName: String,
-    onConfirm: (String) -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var text by remember { mutableStateOf(currentName) }
+private fun RenameStickerDialog(sticker: Sticker, onDismiss: () -> Unit, onRename: (String) -> Unit) {
+    var name by remember(sticker.id) { mutableStateOf(sticker.name) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Rename Sticker") },
-        text = {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                label = { Text("Name") },
-                singleLine = true,
-                shape = MaterialTheme.shapes.medium,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(text.ifBlank { currentName }) }) { Text("Save") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        },
-        shape = MaterialTheme.shapes.extraLarge,
+        title = { Text("Rename sticker") },
+        text = { androidx.compose.material3.OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }, singleLine = true) },
+        confirmButton = { TextButton(onClick = { onRename(name.trim().ifBlank { sticker.name }) }) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }
 
-/** Mini checkerboard tile used in grid items */
 @Composable
-private fun CheckerboardTile(modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier) {
-        val cell = 12.dp.toPx()
-        val cols = (size.width / cell).toInt() + 1
-        val rows = (size.height / cell).toInt() + 1
-        val light = Color(0xFFF5F5F5)
-        val dark = Color(0xFFE0E0E0)
-        for (row in 0..rows) {
-            for (col in 0..cols) {
-                drawRect(
-                    color = if ((row + col) % 2 == 0) light else dark,
-                    topLeft = androidx.compose.ui.geometry.Offset(col * cell, row * cell),
-                    size = androidx.compose.ui.geometry.Size(cell, cell),
-                )
-            }
-        }
-    }
+private fun EmptyGallery(modifier: Modifier, onBack: () -> Unit) = Column(modifier, horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+    Icon(Icons.Outlined.StickyNote2, null, Modifier.size(72.dp), MaterialTheme.colorScheme.onSurfaceVariant)
+    Spacer(Modifier.height(16.dp)); Text("Your sticker library is empty", style = MaterialTheme.typography.headlineSmall)
+    Spacer(Modifier.height(8.dp)); Text("Create a cut-out, then build a WhatsApp pack from your favourites.", textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 32.dp))
+    Spacer(Modifier.height(24.dp)); FilledTonalButton(onClick = onBack) { Text("Create a sticker") }
+}
+
+@Composable
+private fun Checkerboard(modifier: Modifier) = Canvas(modifier) {
+    val cell = 12.dp.toPx(); val light = Color(0xFFF1F1F1); val dark = Color(0xFFD8D8D8)
+    repeat((size.height / cell).toInt() + 1) { row -> repeat((size.width / cell).toInt() + 1) { column -> drawRect(if ((row + column) % 2 == 0) light else dark, androidx.compose.ui.geometry.Offset(column * cell, row * cell), androidx.compose.ui.geometry.Size(cell, cell)) } }
 }

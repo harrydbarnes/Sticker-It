@@ -11,6 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.ByteArrayOutputStream
 import java.io.FileOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -27,9 +28,15 @@ class StickerRepository @Inject constructor(
     /** Decode a URI to a Bitmap, handling content:// and file:// schemes */
     suspend fun loadBitmapFromUri(uri: Uri): Bitmap? = withContext(Dispatchers.IO) {
         runCatching {
-            context.contentResolver.openInputStream(uri)?.use { stream ->
-                BitmapFactory.decodeStream(stream)
+            val resolver = context.contentResolver
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return@runCatching null
+            val options = BitmapFactory.Options().apply {
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+                inSampleSize = calculateInSampleSize(bounds.outWidth, bounds.outHeight, 2048)
             }
+            resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
         }.getOrNull()
     }
 
@@ -44,9 +51,10 @@ class StickerRepository @Inject constructor(
         val fileName = "sticker_${System.currentTimeMillis()}.webp"
         val file = File(stickersDir, fileName)
 
-        FileOutputStream(file).use { out ->
-            bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSLESS, 100, out)
-        }
+        // WhatsApp accepts static stickers only up to 100 KB. Lossy WebP is required
+        // for photographic cut-outs to fit that limit reliably while retaining alpha.
+        val encoded = encodeForWhatsApp(bitmap)
+        FileOutputStream(file).use { it.write(encoded) }
 
         val sticker = Sticker(
             filePath = file.absolutePath,
@@ -68,10 +76,6 @@ class StickerRepository @Inject constructor(
         dao.reorder(stickers)
     }
 
-    suspend fun markAddedToGboard(stickerId: Long) = withContext(Dispatchers.IO) {
-        dao.markAddedToGboard(stickerId)
-    }
-
     suspend fun renameSticker(sticker: Sticker, newName: String) = withContext(Dispatchers.IO) {
         dao.update(sticker.copy(name = newName))
     }
@@ -82,5 +86,21 @@ class StickerRepository @Inject constructor(
     /** Load a sticker bitmap from its file path */
     suspend fun loadStickerBitmap(sticker: Sticker): Bitmap? = withContext(Dispatchers.IO) {
         runCatching { BitmapFactory.decodeFile(sticker.filePath) }.getOrNull()
+    }
+
+    private fun encodeForWhatsApp(bitmap: Bitmap): ByteArray {
+        for (quality in 90 downTo 30 step 10) {
+            val output = ByteArrayOutputStream()
+            bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSY, quality, output)
+            val bytes = output.toByteArray()
+            if (bytes.size <= 100 * 1024) return bytes
+        }
+        error("This image is too detailed for WhatsApp's 100 KB sticker limit. Try a simpler cut-out.")
+    }
+
+    private fun calculateInSampleSize(width: Int, height: Int, maxDimension: Int): Int {
+        var sample = 1
+        while (width / sample > maxDimension || height / sample > maxDimension) sample *= 2
+        return sample
     }
 }

@@ -7,7 +7,6 @@ import android.graphics.Paint
 import android.graphics.PointF
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.segmentation.subject.SubjectSegmentation
-import com.google.mlkit.vision.segmentation.subject.SubjectSegmentationResult
 import com.google.mlkit.vision.segmentation.subject.SubjectSegmenterOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -34,11 +33,9 @@ class ImageSegmentationHelper @Inject constructor() {
     private val segmenter by lazy {
         SubjectSegmentation.getClient(
             SubjectSegmenterOptions.Builder()
-                .enableForegroundBitmap()
                 .enableForegroundConfidenceMask()
                 .enableMultipleSubjects(
                     SubjectSegmenterOptions.SubjectResultOptions.Builder()
-                        .enableSubjectBitmap()
                         .enableConfidenceMask()
                         .build()
                 )
@@ -49,8 +46,6 @@ class ImageSegmentationHelper @Inject constructor() {
     data class SegmentationResult(
         /** The original bitmap passed in */
         val original: Bitmap,
-        /** ARGB_8888 bitmap containing only the foreground subject (transparent bg) */
-        val foregroundBitmap: Bitmap,
         /** Float array, size == width*height, values 0..1 indicating subject confidence */
         val confidenceMask: FloatArray,
         val maskWidth: Int,
@@ -73,15 +68,12 @@ class ImageSegmentationHelper @Inject constructor() {
         suspendCancellableCoroutine { cont ->
             segmenter.process(image)
                 .addOnSuccessListener { result ->
-                    val foreground = result.foregroundBitmap
-                        ?: buildForegroundFromMask(scaled, result)
                     val maskBuffer = result.foregroundConfidenceMask
                     val mask = maskBuffer?.toFloatArray()
                         ?: FloatArray(scaled.width * scaled.height) { 0f }
                     cont.resume(
                         SegmentationResult(
                             original = scaled,
-                            foregroundBitmap = foreground,
                             confidenceMask = mask,
                             maskWidth = scaled.width,
                             maskHeight = scaled.height,
@@ -143,12 +135,28 @@ class ImageSegmentationHelper @Inject constructor() {
             when (stroke) {
                 is BrushStroke.Stroke -> {
                     val value = if (stroke.include) 1f else 0f
-                    for (point in stroke.points) {
-                        // Convert normalised coordinates (0..1) to mask pixel coordinates
+                    val radius = (stroke.radiusNorm * maskWidth).toInt().coerceAtLeast(1)
+                    val points = stroke.points
+                    for (index in points.indices) {
+                        val point = points[index]
                         val cx = (point.x * maskWidth).toInt()
                         val cy = (point.y * maskHeight).toInt()
-                        val r = (stroke.radiusNorm * maskWidth).toInt().coerceAtLeast(1)
-                        paintCircle(updated, maskWidth, maskHeight, cx, cy, r, value)
+                        if (index == 0) {
+                            paintCircle(updated, maskWidth, maskHeight, cx, cy, radius, value)
+                        } else {
+                            val previous = points[index - 1]
+                            paintSegment(
+                                mask = updated,
+                                w = maskWidth,
+                                h = maskHeight,
+                                fromX = (previous.x * maskWidth).toInt(),
+                                fromY = (previous.y * maskHeight).toInt(),
+                                toX = cx,
+                                toY = cy,
+                                radius = radius,
+                                value = value,
+                            )
+                        }
                     }
                 }
                 is BrushStroke.SubjectFill -> {
@@ -215,8 +223,21 @@ class ImageSegmentationHelper @Inject constructor() {
         }
         sticker.setPixels(pixels, 0, maskWidth, 0, 0, maskWidth, maskHeight)
 
-        // Scale to target output size
-        return Bitmap.createScaledBitmap(sticker, outputSize, outputSize, true)
+        // Crop transparent surroundings so small subjects do not become tiny
+        // stickers, then preserve the subject's aspect ratio inside a 512px canvas.
+        val bounds = opaqueBounds(pixels, maskWidth, maskHeight)
+        val output = Bitmap.createBitmap(outputSize, outputSize, Bitmap.Config.ARGB_8888)
+        if (bounds == null) return output.also { sticker.recycle() }
+        val padding = (outputSize * 0.04f).toInt()
+        val available = outputSize - (padding * 2)
+        val scale = minOf(available.toFloat() / bounds.width(), available.toFloat() / bounds.height())
+        val drawWidth = bounds.width() * scale
+        val drawHeight = bounds.height() * scale
+        val left = (outputSize - drawWidth) / 2f
+        val top = (outputSize - drawHeight) / 2f
+        Canvas(output).drawBitmap(sticker, bounds, android.graphics.RectF(left, top, left + drawWidth, top + drawHeight), Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+        sticker.recycle()
+        return output
     }
 
     // -----------------------------------------------------------------------
@@ -232,18 +253,19 @@ class ImageSegmentationHelper @Inject constructor() {
         return Bitmap.createScaledBitmap(bitmap, w, h, true)
     }
 
-    private fun buildForegroundFromMask(bitmap: Bitmap, result: SubjectSegmentationResult): Bitmap {
-        val out = bitmap.copy(Bitmap.Config.ARGB_8888, true)
-        val maskBuffer = result.foregroundConfidenceMask
-                    val mask = maskBuffer?.toFloatArray() ?: return out
-        val pixels = IntArray(bitmap.width * bitmap.height)
-        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-        for (i in pixels.indices) {
-            val alpha = (mask[i] * 255).toInt()
-            pixels[i] = (alpha shl 24) or (pixels[i] and 0x00FFFFFF)
+    private fun opaqueBounds(pixels: IntArray, width: Int, height: Int): android.graphics.Rect? {
+        var left = width
+        var top = height
+        var right = -1
+        var bottom = -1
+        pixels.forEachIndexed { index, pixel ->
+            if ((pixel ushr 24) == 0) return@forEachIndexed
+            val x = index % width
+            val y = index / width
+            left = minOf(left, x); top = minOf(top, y)
+            right = maxOf(right, x); bottom = maxOf(bottom, y)
         }
-        out.setPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-        return out
+        return if (right < left || bottom < top) null else android.graphics.Rect(left, top, right + 1, bottom + 1)
     }
 
     private fun paintCircle(
@@ -276,6 +298,27 @@ class ImageSegmentationHelper @Inject constructor() {
             for (x in xMin..xMax) {
                 mask[rowOffset + x] = value
             }
+        }
+    }
+
+    /** Paints enough overlapping circles to make fast finger drags gap-free. */
+    private fun paintSegment(
+        mask: FloatArray,
+        w: Int,
+        h: Int,
+        fromX: Int,
+        fromY: Int,
+        toX: Int,
+        toY: Int,
+        radius: Int,
+        value: Float,
+    ) {
+        val dx = toX - fromX
+        val dy = toY - fromY
+        val steps = maxOf(1, kotlin.math.ceil(kotlin.math.hypot(dx.toDouble(), dy.toDouble()) / radius.coerceAtLeast(1)).toInt())
+        for (step in 0..steps) {
+            val fraction = step.toFloat() / steps
+            paintCircle(mask, w, h, (fromX + dx * fraction).toInt(), (fromY + dy * fraction).toInt(), radius, value)
         }
     }
 }

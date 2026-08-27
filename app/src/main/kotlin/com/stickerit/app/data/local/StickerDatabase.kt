@@ -39,8 +39,6 @@ interface StickerDao {
         }
     }
 
-    @Query("UPDATE stickers SET addedToGboard = 1 WHERE id = :id")
-    suspend fun markAddedToGboard(id: Long)
 }
 
 // ---------------------------------------------------------------------------

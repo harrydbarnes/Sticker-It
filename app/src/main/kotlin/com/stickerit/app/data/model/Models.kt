@@ -1,6 +1,7 @@
 package com.stickerit.app.data.model
 
 import androidx.room.Entity
+import androidx.room.ColumnInfo
 import androidx.room.PrimaryKey
 import androidx.room.TypeConverter
 import androidx.room.TypeConverters
@@ -25,12 +26,17 @@ data class Sticker(
     val width: Int = 512,
     /** Height of the sticker in pixels */
     val height: Int = 512,
-    /** Whether the sticker has been pushed to GBoard */
-    val addedToGboard: Boolean = false,
+    /**
+     * Legacy on-disk column retained so version 1 libraries remain readable.
+     * WhatsApp packs are generated from the current user selection, so this value
+     * is not used to represent a destination or sync state.
+     */
+    @ColumnInfo(name = "addedToGboard")
+    val legacyPackFlag: Boolean = false,
 )
 
 // ---------------------------------------------------------------------------
-// StickerPack  (for GBoard ContentProvider)
+// StickerPack metadata
 // ---------------------------------------------------------------------------
 
 data class StickerPack(

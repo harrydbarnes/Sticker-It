@@ -317,7 +317,7 @@ private fun EditorBottomBar(
                     label = "Include",
                     icon = Icons.Outlined.Add,
                     selected = brushMode == BrushMode.INCLUDE,
-                    colour = Color(0xFF00C864),
+                    colour = MaterialTheme.colorScheme.primary,
                     modifier = Modifier.weight(1f),
                     onClick = { onBrushModeChange(BrushMode.INCLUDE) },
                 )
@@ -325,7 +325,7 @@ private fun EditorBottomBar(
                     label = "Exclude",
                     icon = Icons.Outlined.Remove,
                     selected = brushMode == BrushMode.EXCLUDE,
-                    colour = Color(0xFFFF3B30),
+                    colour = MaterialTheme.colorScheme.error,
                     modifier = Modifier.weight(1f),
                     onClick = { onBrushModeChange(BrushMode.EXCLUDE) },
                 )

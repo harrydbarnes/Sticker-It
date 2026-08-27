@@ -97,7 +97,6 @@ fun StickerItNavHost(
         composable(Route.Gallery.path) {
             StickerGalleryScreen(
                 onBack = { navController.popBackStack() },
-                onEditSticker = { /* future */ },
             )
         }
     }

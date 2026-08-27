@@ -21,26 +21,14 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.google.accompanist.permissions.ExperimentalPermissionsApi
-import com.google.accompanist.permissions.isGranted
-import com.google.accompanist.permissions.rememberPermissionState
-import com.google.accompanist.permissions.shouldShowRationale
 
-@OptIn(ExperimentalPermissionsApi::class)
 @Composable
 fun HomeScreen(
     onPickImage: (Uri) -> Unit,
     onOpenGallery: () -> Unit,
 ) {
-    val mediaPermission = rememberPermissionState(
-        permission = if (android.os.Build.VERSION.SDK_INT >= 33)
-            android.Manifest.permission.READ_MEDIA_IMAGES
-        else
-            android.Manifest.permission.READ_EXTERNAL_STORAGE
-    )
-
     val imagePicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         uri?.let(onPickImage)
     }
@@ -116,7 +104,7 @@ fun HomeScreen(
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
-                    text = "Turn any photo into a sticker\nfor GBoard and beyond",
+                    text = "Turn any photo into a sticker\nfor your library and WhatsApp",
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
@@ -128,11 +116,11 @@ fun HomeScreen(
                 FilledTonalButton(
                     onClick = {
                         fabPressed = true
-                        if (mediaPermission.status.isGranted) {
-                            imagePicker.launch("image/*")
-                        } else {
-                            mediaPermission.launchPermissionRequest()
-                        }
+                        imagePicker.launch(
+                            ActivityResultContracts.PickVisualMediaRequest(
+                                ActivityResultContracts.PickVisualMedia.ImageOnly,
+                            ),
+                        )
                     },
                     modifier = Modifier
                         .fillMaxWidth()
@@ -177,23 +165,6 @@ fun HomeScreen(
                     )
                 }
 
-                // Permission rationale
-                if (mediaPermission.status.shouldShowRationale) {
-                    Spacer(modifier = Modifier.height(24.dp))
-                    Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.errorContainer,
-                        ),
-                        shape = MaterialTheme.shapes.medium,
-                    ) {
-                        Text(
-                            text = "Photo access is needed to pick images. Please grant permission in Settings.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                            modifier = Modifier.padding(16.dp),
-                        )
-                    }
-                }
             }
         }
     }
