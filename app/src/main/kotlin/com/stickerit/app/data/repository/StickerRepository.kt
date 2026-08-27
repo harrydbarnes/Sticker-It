@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.net.Uri
+import android.os.Build
 import com.stickerit.app.data.local.StickerDao
 import com.stickerit.app.data.model.Sticker
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -89,9 +90,14 @@ class StickerRepository @Inject constructor(
     }
 
     private fun encodeForWhatsApp(bitmap: Bitmap): ByteArray {
+        val format = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Bitmap.CompressFormat.WEBP_LOSSY
+        } else {
+            Bitmap.CompressFormat.WEBP
+        }
         for (quality in 90 downTo 30 step 10) {
             val output = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.WEBP_LOSSY, quality, output)
+            bitmap.compress(format, quality, output)
             val bytes = output.toByteArray()
             if (bytes.size <= 100 * 1024) return bytes
         }
