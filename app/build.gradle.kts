@@ -3,6 +3,7 @@ plugins {
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.hilt)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.room)
 }
 
 android {
@@ -58,6 +59,11 @@ android {
     androidResources {
         noCompress += "tflite"
     }
+
+    room {
+        // Room's plugin configures KSP outputs as cacheable, variant-specific schemas.
+        schemaDirectory("$projectDir/schemas")
+    }
 }
 
 kotlin {
@@ -95,6 +101,10 @@ dependencies {
 
     // ML Kit - Subject Segmentation
     implementation(libs.mlkit.subject.segmentation)
+    implementation(libs.play.services.base)
+
+    // Preferences DataStore (migrated from the original editor SharedPreferences)
+    implementation(libs.androidx.datastore.preferences)
 
     // Bundled CPU fallback for Android 16+, where the ML Kit beta has a native crash
     implementation(libs.mediapipe.tasks.vision)

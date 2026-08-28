@@ -101,6 +101,11 @@ fun StickerGalleryScreen(
         selectedPackId?.let(viewModel::packItems) ?: flowOf(emptyList())
     }
     val packItems by packItemsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+    val visibleStickerIds: Set<Long>? = when (val state = uiState) {
+        GalleryUiState.Loading -> null
+        GalleryUiState.Empty -> emptySet()
+        is GalleryUiState.Ready -> state.stickers.mapTo(linkedSetOf()) { it.id }
+    }
 
     val trayImagePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia(),
@@ -110,7 +115,16 @@ fun StickerGalleryScreen(
         if (uri != null && packId != null) viewModel.setPackTrayImage(packId, uri)
     }
 
-    LaunchedEffect(Unit) { viewModel.snackbarMessage.collect(snackbarHostState::showSnackbar) }
+    LaunchedEffect(Unit) {
+        viewModel.snackbarMessage.collect { message ->
+            snackbarHostState.showSnackbar(message.text(context))
+        }
+    }
+    LaunchedEffect(visibleStickerIds) {
+        visibleStickerIds?.let { visibleIds ->
+            selectedIds = pruneSelectedStickerIds(selectedIds, visibleIds)
+        }
+    }
     LaunchedEffect(Unit) {
         viewModel.createdPack.collect { createdId ->
             pendingCreatedPackId = createdId
@@ -145,7 +159,14 @@ fun StickerGalleryScreen(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 onToggle = { id -> selectedIds = selectedIds.let { if (id in it) it - id else it + id } },
                 onSelectAll = { selectedIds = state.stickers.take(30).mapTo(linkedSetOf()) { it.id } },
-                onShare = { sticker -> context.startActivity(Intent.createChooser(viewModel.buildShareIntent(sticker), "Share sticker")) },
+                onShare = { sticker ->
+                    context.startActivity(
+                        Intent.createChooser(
+                            viewModel.buildShareIntent(sticker),
+                            context.getString(R.string.share_sticker),
+                        ),
+                    )
+                },
                 onEdit = onEdit,
                 onDelete = { deleteTarget = it },
                 onRename = { renameTarget = it },
@@ -194,6 +215,24 @@ fun StickerGalleryScreen(
         onRename = { name -> viewModel.renameSticker(sticker, name); renameTarget = null },
     ) }
 }
+
+private fun GalleryMessage.text(context: android.content.Context): String = context.getString(
+    when (this) {
+        GalleryMessage.StickerDeleted -> R.string.gallery_sticker_deleted
+        GalleryMessage.PackCreated -> R.string.gallery_pack_created
+        GalleryMessage.PackRenamed -> R.string.gallery_pack_renamed
+        GalleryMessage.PackDeleted -> R.string.gallery_pack_deleted
+        GalleryMessage.KeepOnePack -> R.string.gallery_keep_one_pack
+        GalleryMessage.TrayImageUpdated -> R.string.gallery_tray_image_updated
+        GalleryMessage.CouldNotUseImage -> R.string.gallery_could_not_use_image
+        GalleryMessage.StickerMetadataSaved -> R.string.gallery_sticker_metadata_saved
+        GalleryMessage.CouldNotPrepareWhatsAppPack -> R.string.gallery_could_not_prepare_whatsapp_pack
+        GalleryMessage.ConfirmWhatsAppPack -> R.string.gallery_confirm_whatsapp_pack
+        GalleryMessage.WhatsAppNotInstalled -> R.string.gallery_whatsapp_not_installed
+        GalleryMessage.InvalidWhatsAppStickerCount -> R.string.gallery_invalid_whatsapp_sticker_count
+        GalleryMessage.WhatsAppPackNotFound -> R.string.gallery_whatsapp_pack_not_found
+    },
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

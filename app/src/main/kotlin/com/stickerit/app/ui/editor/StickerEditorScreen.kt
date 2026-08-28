@@ -304,6 +304,7 @@ private fun EditorCanvas(
                         ),
                     brushMode = brushMode,
                     brushRadius = brushRadius,
+                    sourceImageWidthPx = state.originalBitmap.width,
                     onDragStart = onDragStart,
                     onDrag = onDrag,
                     onDragEnd = onDragEnd,

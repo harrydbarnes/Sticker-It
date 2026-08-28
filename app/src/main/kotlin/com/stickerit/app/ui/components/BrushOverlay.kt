@@ -31,6 +31,8 @@ fun BrushOverlay(
     modifier: Modifier = Modifier,
     brushMode: BrushMode,
     brushRadius: Float,
+    /** Width of the bitmap that [brushRadius] is measured against. */
+    sourceImageWidthPx: Int = 0,
     onDragStart: (normX: Float, normY: Float) -> Unit,
     onDrag: (normX: Float, normY: Float) -> Unit,
     onDragEnd: () -> Unit,
@@ -51,7 +53,7 @@ fun BrushOverlay(
                 canvasSize = Size(size.width.toFloat(), size.height.toFloat())
             }
             .semantics { contentDescription = canvasDescription }
-            .pointerInput(brushMode, brushRadius) {
+            .pointerInput(brushMode, brushRadius, sourceImageWidthPx) {
                 detectDragGestures(
                     onDragStart = { offset ->
                         activeStroke.clear()
@@ -90,10 +92,15 @@ fun BrushOverlay(
     ) {
         // Draw active stroke
         val activeColour = if (brushMode == BrushMode.INCLUDE) includeStrokeColour else excludeStrokeColour
+        val screenBrushRadius = brushRadiusInCanvasPixels(
+            sourceRadiusPx = brushRadius,
+            canvasWidthPx = size.width,
+            sourceImageWidthPx = sourceImageWidthPx,
+        )
         if (activeStroke.size == 1) {
             drawCircle(
                 color = activeColour,
-                radius = brushRadius,
+                radius = screenBrushRadius,
                 center = activeStroke.first(),
             )
         } else if (activeStroke.size > 1) {
@@ -105,13 +112,27 @@ fun BrushOverlay(
                 path = path,
                 color = activeColour,
                 style = Stroke(
-                    width = brushRadius * 2,
+                    width = screenBrushRadius * 2,
                     cap = StrokeCap.Round,
                     join = StrokeJoin.Round,
                 )
             )
         }
     }
+}
+
+/**
+ * Converts the brush radius stored in source-image pixels into the radius that
+ * should be drawn on the fitted editor canvas. Keeping this conversion here
+ * makes the guide match the mask operation at every device size.
+ */
+internal fun brushRadiusInCanvasPixels(
+    sourceRadiusPx: Float,
+    canvasWidthPx: Float,
+    sourceImageWidthPx: Int,
+): Float {
+    if (sourceImageWidthPx <= 0 || canvasWidthPx <= 0f) return sourceRadiusPx
+    return (sourceRadiusPx * canvasWidthPx / sourceImageWidthPx).coerceAtLeast(1f)
 }
 
 /**

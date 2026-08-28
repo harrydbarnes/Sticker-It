@@ -1,13 +1,10 @@
 package com.stickerit.app.di
 
 import android.content.Context
-import androidx.room.Room
 import com.stickerit.app.data.local.StickerDao
 import com.stickerit.app.data.local.StickerPackDao
 import com.stickerit.app.data.local.StickerDatabase
-import com.stickerit.app.data.local.MIGRATION_1_2
-import com.stickerit.app.data.local.MIGRATION_2_3
-import com.stickerit.app.data.local.MIGRATION_3_4
+import com.stickerit.app.data.local.StickerDatabaseFactory
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
@@ -22,11 +19,7 @@ object DatabaseModule {
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): StickerDatabase =
-        Room.databaseBuilder(
-            context,
-            StickerDatabase::class.java,
-            "sticker_it.db",
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build()
+        StickerDatabaseFactory.create(context)
 
     @Provides
     fun provideStickerDao(db: StickerDatabase): StickerDao = db.stickerDao()

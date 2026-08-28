@@ -1,22 +1,23 @@
 [versions]
 agp = "9.3.2"
-kotlin = "2.2.10"
-ksp = "2.2.10-2.0.2"
+kotlin = "2.4.10"
+ksp = "2.3.11"
 coreKtx = "1.19.0"
 junit = "4.13.2"
-junitVersion = "1.2.1"
-espressoCore = "3.6.1"
+junitVersion = "1.3.0"
+espressoCore = "3.7.0"
 lifecycleRuntimeKtx = "2.11.0"
 activityCompose = "1.13.0"
 composeBom = "2026.08.00"
-hilt = "2.59.2"
+hilt = "2.60.1"
 hiltNavigationCompose = "1.2.0"
-navigationCompose = "2.9.7"
+navigationCompose = "2.9.8"
 mlkitSegmentation = "16.0.0-beta1"
-mlkitObjectDetection = "17.0.2"
 coil = "2.7.0"
-coroutines = "1.9.0"
+coroutines = "1.11.0"
 room = "2.8.4"
+dataStore = "1.2.1"
+playServicesBase = "18.10.1"
 mediapipeTasksVision = "0.10.29"
 
 [libraries]
@@ -41,7 +42,6 @@ hilt-android = { group = "com.google.dagger", name = "hilt-android", version.ref
 hilt-compiler = { group = "com.google.dagger", name = "hilt-android-compiler", version.ref = "hilt" }
 hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navigation-compose", version.ref = "hiltNavigationCompose" }
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
-mlkit-selfie-segmentation = { group = "com.google.mlkit", name = "selfie-segmentation", version = "16.0.0-beta1" }
 mlkit-subject-segmentation = { group = "com.google.android.gms", name = "play-services-mlkit-subject-segmentation", version.ref = "mlkitSegmentation" }
 mediapipe-tasks-vision = { group = "com.google.mediapipe", name = "tasks-vision", version.ref = "mediapipeTasksVision" }
 coil-compose = { group = "io.coil-kt", name = "coil-compose", version.ref = "coil" }
@@ -49,9 +49,12 @@ kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-
 room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
 room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "dataStore" }
+play-services-base = { group = "com.google.android.gms", name = "play-services-base", version.ref = "playServicesBase" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+room = { id = "androidx.room", version.ref = "room" }

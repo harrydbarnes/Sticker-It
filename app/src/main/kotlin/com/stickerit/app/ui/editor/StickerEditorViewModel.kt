@@ -24,6 +24,8 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.stickerit.app.data.model.FinishRecipe
+import java.util.Collections
+import java.util.IdentityHashMap
 import javax.inject.Inject
 
 @HiltViewModel
@@ -58,7 +60,11 @@ class StickerEditorViewModel @Inject constructor(
     private val _finishRecipe = MutableStateFlow(FinishRecipe())
     val finishRecipe: StateFlow<FinishRecipe> = _finishRecipe.asStateFlow()
 
-    val zoomAssistEnabled: StateFlow<Boolean> = settingsRepository.zoomAssistEnabled
+    val zoomAssistEnabled: StateFlow<Boolean> = settingsRepository.zoomAssistEnabled.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(stopTimeoutMillis = 5_000),
+        initialValue = false,
+    )
 
     // ---------- internal state ----------
 
@@ -79,8 +85,20 @@ class StickerEditorViewModel @Inject constructor(
     private var activeStrokePoints = mutableListOf<PointF>()
     private var previewJob: Job? = null
     private var committedRenderJob: Job? = null
+    private var finishPreviewJob: Job? = null
     private var previewGeneration = 0L
     private var finishGeneration = 0L
+
+    /**
+     * Bitmaps are native resources. Render jobs retain their input bitmaps so a
+     * state/session transition cannot recycle a bitmap while a worker is still
+     * reading it. Releases are deferred until the last worker lets go.
+     */
+    private val bitmapLifecycleLock = Any()
+    private val bitmapUseCounts = IdentityHashMap<Bitmap, Int>()
+    private val deferredBitmapReleases = Collections.newSetFromMap(
+        IdentityHashMap<Bitmap, Boolean>(),
+    )
 
     // ---------- public actions ----------
 
@@ -120,10 +138,12 @@ class StickerEditorViewModel @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: OutOfMemoryError) {
+                releaseSessionBitmaps(_uiState.value)
                 _uiState.value = EditorUiState.Error(
                     "This image is too large to process. Please choose a smaller photo."
                 )
             } catch (e: Exception) {
+                releaseSessionBitmaps(_uiState.value)
                 val msg = e.message ?: ""
                 if (msg.contains("download", ignoreCase = true)) {
                     _uiState.value = EditorUiState.Error("Downloading ML Kit module. Please wait a moment and try again.")
@@ -176,10 +196,12 @@ class StickerEditorViewModel @Inject constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: OutOfMemoryError) {
+                releaseSessionBitmaps(_uiState.value)
                 _uiState.value = EditorUiState.Error(
                     "This sticker is too large to reopen. Please try a smaller image."
                 )
             } catch (e: Exception) {
+                releaseSessionBitmaps(_uiState.value)
                 _uiState.value = EditorUiState.Error(e.message ?: "Could not open sticker")
             }
         }
@@ -285,32 +307,74 @@ class StickerEditorViewModel @Inject constructor(
         redoStrokes.clear()
         activeStrokePoints.clear()
         val base = baseConfidenceMask ?: return
-        originalBitmap ?: return
+        val original = originalBitmap ?: return
+        val generation = ++previewGeneration
+        val finishVersion = finishGeneration
+        val recipe = _finishRecipe.value
+        val background = backgroundBitmap
+        retainBitmap(original)
+        retainBitmap(background)
         updateHistoryState()
 
-        viewModelScope.launch {
-            confidenceMask = base.copyOf()
-            val current = _uiState.value
-            if (current is EditorUiState.SegmentationReady) {
-                val selectionDimBitmap = withContext(Dispatchers.Default) {
-                    segmentationHelper.buildSelectionDimBitmap(
-                        confidenceMask = base,
-                        maskWidth = maskWidth,
-                        maskHeight = maskHeight,
-                    )
-                }
-                val preview = buildPreview()
-                val finishedPreview = withContext(Dispatchers.Default) {
-                    buildFinishedPreview(preview)
-                }
-                publishRenderedState(
-                    current = current,
-                    preview = preview,
-                    selectionDim = selectionDimBitmap,
-                    finishedPreview = finishedPreview,
+        val job = viewModelScope.launch(Dispatchers.Default) {
+            var preview: Bitmap? = null
+            var selectionDimBitmap: Bitmap? = null
+            var finishedPreview: Bitmap? = null
+            try {
+                val resetMask = base.copyOf()
+                selectionDimBitmap = segmentationHelper.buildSelectionDimBitmap(
+                    confidenceMask = resetMask,
+                    maskWidth = maskWidth,
+                    maskHeight = maskHeight,
                 )
+                preview = segmentationHelper.buildStickerBitmap(
+                    original = original,
+                    confidenceMask = resetMask,
+                    maskWidth = maskWidth,
+                    maskHeight = maskHeight,
+                )
+                finishedPreview = StickerFinishRenderer.render(preview!!, recipe, background)
+
+                withContext(Dispatchers.Main.immediate) {
+                    if (generation != previewGeneration) return@withContext
+                    if (_uiState.value !is EditorUiState.SegmentationReady) return@withContext
+
+                    confidenceMask = resetMask
+                    val renderedPreview = preview ?: return@withContext
+                    val renderedSelection = selectionDimBitmap ?: return@withContext
+                    val renderedFinishedPreview = finishedPreview
+                    if (finishVersion == finishGeneration && renderedFinishedPreview != null) {
+                        publishRenderedState(
+                            preview = renderedPreview,
+                            selectionDim = renderedSelection,
+                            finishedPreview = renderedFinishedPreview,
+                        )
+                        preview = null
+                        selectionDimBitmap = null
+                        finishedPreview = null
+                    } else {
+                        publishPreviewState(
+                            preview = renderedPreview,
+                            selectionDim = renderedSelection,
+                        )
+                        preview = null
+                        selectionDimBitmap = null
+                        recycleBitmapWhenSafe(renderedFinishedPreview)
+                        finishedPreview = null
+                        scheduleFinishPreview(
+                            preview = renderedPreview,
+                            expectedPreviewGeneration = generation,
+                        )
+                    }
+                }
+            } finally {
+                recycleBitmapWhenSafe(finishedPreview)
+                recycleBitmapWhenSafe(selectionDimBitmap)
+                recycleBitmapWhenSafe(preview)
             }
         }
+        releaseBitmapUsesOnCompletion(job, background, original)
+        committedRenderJob = job
     }
 
     fun setStickerName(name: String) {
@@ -318,30 +382,28 @@ class StickerEditorViewModel @Inject constructor(
     }
 
     fun setFinishRecipe(recipe: FinishRecipe) {
-        _finishRecipe.value = recipe.copy(
+        val normalizedRecipe = recipe.copy(
             outlineWidth = recipe.outlineWidth.coerceIn(0f, 28f),
             scale = recipe.scale.coerceIn(0.55f, 1.35f),
             offsetX = recipe.offsetX.coerceIn(-0.45f, 0.45f),
             offsetY = recipe.offsetY.coerceIn(-0.45f, 0.45f),
         )
+        _finishRecipe.value = normalizedRecipe
         finishGeneration++
         val current = _uiState.value as? EditorUiState.SegmentationReady ?: return
-        val finishedPreview = buildFinishedPreview(current.previewBitmap)
-        val oldFinishedPreview = current.finishedPreviewBitmap
-        _uiState.value = current.copy(finishedPreviewBitmap = finishedPreview)
-        if (oldFinishedPreview !== current.previewBitmap &&
-            oldFinishedPreview !== finishedPreview &&
-            !oldFinishedPreview.isRecycled
-        ) {
-            oldFinishedPreview.recycle()
-        }
+        scheduleFinishPreview(
+            preview = current.previewBitmap,
+            expectedPreviewGeneration = previewGeneration,
+        )
     }
 
     fun setBackgroundImage(uri: Uri) {
         viewModelScope.launch {
             val path = repository.persistBackgroundImage(uri) ?: return@launch
             val bitmap = repository.loadBitmapFromPath(path) ?: return@launch
+            val previousBackground = backgroundBitmap
             backgroundBitmap = bitmap
+            recycleBitmapWhenSafe(previousBackground)
             setFinishRecipe(
                 _finishRecipe.value.copy(
                     backgroundType = FinishBackgroundType.IMAGE,
@@ -352,7 +414,9 @@ class StickerEditorViewModel @Inject constructor(
     }
 
     fun clearBackgroundImage() {
+        val previousBackground = backgroundBitmap
         backgroundBitmap = null
+        recycleBitmapWhenSafe(previousBackground)
         setFinishRecipe(
             _finishRecipe.value.copy(
                 backgroundType = FinishBackgroundType.TRANSPARENT,
@@ -365,36 +429,41 @@ class StickerEditorViewModel @Inject constructor(
         previewGeneration++
         previewJob?.cancel()
         previewJob = null
-        viewModelScope.launch {
+        val original = originalBitmap
+        val background = backgroundBitmap
+        val recipe = _finishRecipe.value
+        retainBitmap(original)
+        retainBitmap(background)
+        val job = viewModelScope.launch {
             committedRenderJob?.join()
             _uiState.value = EditorUiState.Loading
             try {
                 val mask = confidenceMask ?: error("No mask available")
-                val original = originalBitmap ?: error("No source image available")
-                val recipe = _finishRecipe.value
-                val background = backgroundBitmap
-                val stickerBitmap = withContext(Dispatchers.Default) {
-                    segmentationHelper.buildStickerBitmap(
-                        original = original,
-                        confidenceMask = mask,
-                        maskWidth = maskWidth,
-                        maskHeight = maskHeight,
-                    )
-                }
-                val finishedBitmap = withContext(Dispatchers.Default) {
-                    StickerFinishRenderer.render(
-                        cutout = stickerBitmap,
-                        recipe = recipe,
-                        backgroundBitmap = background,
-                    )
-                }
+                val source = original ?: error("No source image available")
+                var stickerBitmap: Bitmap? = null
+                var finishedBitmap: Bitmap? = null
                 try {
+                    stickerBitmap = withContext(Dispatchers.Default) {
+                        segmentationHelper.buildStickerBitmap(
+                            original = source,
+                            confidenceMask = mask,
+                            maskWidth = maskWidth,
+                            maskHeight = maskHeight,
+                        )
+                    }
+                    finishedBitmap = withContext(Dispatchers.Default) {
+                        StickerFinishRenderer.render(
+                            cutout = stickerBitmap!!,
+                            recipe = recipe,
+                            backgroundBitmap = background,
+                        )
+                    }
                     val existing = editingSticker
                     if (existing == null) {
                         repository.saveSticker(
-                            bitmap = finishedBitmap,
+                            bitmap = finishedBitmap!!,
                             name = _stickerName.value,
-                            originalBitmap = original,
+                            originalBitmap = source,
                             confidenceMask = mask.copyOf(),
                             maskWidth = maskWidth,
                             maskHeight = maskHeight,
@@ -403,8 +472,8 @@ class StickerEditorViewModel @Inject constructor(
                     } else {
                         repository.updateSticker(
                             sticker = existing,
-                            bitmap = finishedBitmap,
-                            originalBitmap = original,
+                            bitmap = finishedBitmap!!,
+                            originalBitmap = source,
                             confidenceMask = mask.copyOf(),
                             maskWidth = maskWidth,
                             maskHeight = maskHeight,
@@ -413,18 +482,21 @@ class StickerEditorViewModel @Inject constructor(
                         )
                     }
                 } finally {
-                    finishedBitmap.recycle()
-                    stickerBitmap.recycle()
+                    recycleBitmapWhenSafe(finishedBitmap)
+                    recycleBitmapWhenSafe(stickerBitmap)
                 }
                 _uiState.value = EditorUiState.Saved
             } catch (e: OutOfMemoryError) {
                 _uiState.value = EditorUiState.Error(
                     "There is not enough memory to save this sticker. Please try a smaller image."
                 )
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _uiState.value = EditorUiState.Error(e.message ?: "Save failed")
             }
         }
+        releaseBitmapUsesOnCompletion(job, background, original)
     }
 
     // ---------- private helpers ----------
@@ -443,136 +515,178 @@ class StickerEditorViewModel @Inject constructor(
         val finishVersion = finishGeneration
         val recipe = _finishRecipe.value
         val background = backgroundBitmap
+        val original = originalBitmap
+        retainBitmap(original)
+        retainBitmap(background)
         previewJob?.cancel()
-        previewJob = viewModelScope.launch(Dispatchers.Default) {
-            // Conflate pointer events to one preview per visual frame instead of rendering
-            // every raw move event. The final stroke remains precise on drag end.
-            delay(16)
-            val base = baseConfidenceMask ?: return@launch
-            val updatedMask = segmentationHelper.applyBrushStrokes(
-                confidenceMask = base,
-                maskWidth = maskWidth,
-                maskHeight = maskHeight,
-                brushStrokes = allStrokes,
-            )
+        val job = viewModelScope.launch(Dispatchers.Default) {
+            var preview: Bitmap? = null
+            var selectionDimBitmap: Bitmap? = null
+            var finishedPreview: Bitmap? = null
+            try {
+                // Conflate pointer events to one preview per visual frame instead of rendering
+                // every raw move event. The final stroke remains precise on drag end.
+                delay(16)
+                val base = baseConfidenceMask ?: return@launch
+                val source = original ?: return@launch
+                val updatedMask = segmentationHelper.applyBrushStrokes(
+                    confidenceMask = base,
+                    maskWidth = maskWidth,
+                    maskHeight = maskHeight,
+                    brushStrokes = allStrokes,
+                )
 
-            val preview = segmentationHelper.buildStickerBitmap(
-                original = originalBitmap!!,
-                confidenceMask = updatedMask,
-                maskWidth = maskWidth,
-                maskHeight = maskHeight,
-            )
-            val selectionDimBitmap = segmentationHelper.buildSelectionDimBitmap(
-                confidenceMask = updatedMask,
-                maskWidth = maskWidth,
-                maskHeight = maskHeight,
-            )
-            val finishedPreview = StickerFinishRenderer.render(preview, recipe, background)
+                preview = segmentationHelper.buildStickerBitmap(
+                    original = source,
+                    confidenceMask = updatedMask,
+                    maskWidth = maskWidth,
+                    maskHeight = maskHeight,
+                )
+                selectionDimBitmap = segmentationHelper.buildSelectionDimBitmap(
+                    confidenceMask = updatedMask,
+                    maskWidth = maskWidth,
+                    maskHeight = maskHeight,
+                )
+                finishedPreview = StickerFinishRenderer.render(preview!!, recipe, background)
 
-            val current = _uiState.value
-            if (current is EditorUiState.SegmentationReady) {
-                withContext(Dispatchers.Main) {
-                    if (generation == previewGeneration) {
-                        val currentFinishedPreview = if (finishVersion == finishGeneration) {
-                            finishedPreview
-                        } else {
-                            buildFinishedPreview(preview).also { finishedPreview.recycle() }
-                        }
+                withContext(Dispatchers.Main.immediate) {
+                    if (generation != previewGeneration) return@withContext
+                    if (_uiState.value !is EditorUiState.SegmentationReady) return@withContext
+
+                    val renderedPreview = preview ?: return@withContext
+                    val renderedSelection = selectionDimBitmap ?: return@withContext
+                    val renderedFinishedPreview = finishedPreview
+                    if (finishVersion == finishGeneration && renderedFinishedPreview != null) {
                         publishRenderedState(
-                            current = current,
-                            preview = preview,
-                            selectionDim = selectionDimBitmap,
-                            finishedPreview = currentFinishedPreview,
+                            preview = renderedPreview,
+                            selectionDim = renderedSelection,
+                            finishedPreview = renderedFinishedPreview,
                         )
+                        preview = null
+                        selectionDimBitmap = null
+                        finishedPreview = null
                     } else {
-                        preview.recycle()
-                        selectionDimBitmap.recycle()
-                        finishedPreview.recycle()
+                        publishPreviewState(
+                            preview = renderedPreview,
+                            selectionDim = renderedSelection,
+                        )
+                        preview = null
+                        selectionDimBitmap = null
+                        recycleBitmapWhenSafe(renderedFinishedPreview)
+                        finishedPreview = null
+                        scheduleFinishPreview(
+                            preview = renderedPreview,
+                            expectedPreviewGeneration = generation,
+                        )
                     }
                 }
-            } else {
-                preview.recycle()
-                selectionDimBitmap.recycle()
-                finishedPreview.recycle()
+            } finally {
+                recycleBitmapWhenSafe(finishedPreview)
+                recycleBitmapWhenSafe(selectionDimBitmap)
+                recycleBitmapWhenSafe(preview)
             }
         }
+        releaseBitmapUsesOnCompletion(job, background, original)
+        previewJob = job
     }
 
     private fun recomputeMaskFromStrokes() {
         val currentStrokes = brushStrokes.toList()
         val generation = ++previewGeneration
         committedRenderJob?.cancel()
-        committedRenderJob = viewModelScope.launch(Dispatchers.Default) {
-            val base = baseConfidenceMask ?: return@launch
-            val orig = originalBitmap ?: return@launch
-            val finishVersion = finishGeneration
-            val recipe = _finishRecipe.value
-            val background = backgroundBitmap
-            val updatedMask = segmentationHelper.applyBrushStrokes(
-                confidenceMask = base,
-                maskWidth = maskWidth,
-                maskHeight = maskHeight,
-                brushStrokes = currentStrokes,
-            )
-            confidenceMask = updatedMask
-            val preview = segmentationHelper.buildStickerBitmap(
-                original = orig,
-                confidenceMask = updatedMask,
-                maskWidth = maskWidth,
-                maskHeight = maskHeight,
-            )
-            val selectionDimBitmap = segmentationHelper.buildSelectionDimBitmap(
-                confidenceMask = updatedMask,
-                maskWidth = maskWidth,
-                maskHeight = maskHeight,
-            )
-            val finishedPreview = StickerFinishRenderer.render(preview, recipe, background)
-            val current = _uiState.value
-            if (current is EditorUiState.SegmentationReady) {
-                withContext(Dispatchers.Main) {
-                    if (generation == previewGeneration) {
-                        val currentFinishedPreview = if (finishVersion == finishGeneration) {
-                            finishedPreview
-                        } else {
-                            buildFinishedPreview(preview).also { finishedPreview.recycle() }
-                        }
+        val original = originalBitmap
+        val background = backgroundBitmap
+        retainBitmap(original)
+        retainBitmap(background)
+        val job = viewModelScope.launch(Dispatchers.Default) {
+            var preview: Bitmap? = null
+            var selectionDimBitmap: Bitmap? = null
+            var finishedPreview: Bitmap? = null
+            try {
+                val base = baseConfidenceMask ?: return@launch
+                val source = original ?: return@launch
+                val updatedMask = segmentationHelper.applyBrushStrokes(
+                    confidenceMask = base,
+                    maskWidth = maskWidth,
+                    maskHeight = maskHeight,
+                    brushStrokes = currentStrokes,
+                )
+                preview = segmentationHelper.buildStickerBitmap(
+                    original = source,
+                    confidenceMask = updatedMask,
+                    maskWidth = maskWidth,
+                    maskHeight = maskHeight,
+                )
+                selectionDimBitmap = segmentationHelper.buildSelectionDimBitmap(
+                    confidenceMask = updatedMask,
+                    maskWidth = maskWidth,
+                    maskHeight = maskHeight,
+                )
+                finishedPreview = StickerFinishRenderer.render(preview!!, recipe, background)
+
+                withContext(Dispatchers.Main.immediate) {
+                    if (generation != previewGeneration) return@withContext
+                    if (_uiState.value !is EditorUiState.SegmentationReady) return@withContext
+
+                    confidenceMask = updatedMask
+                    val renderedPreview = preview ?: return@withContext
+                    val renderedSelection = selectionDimBitmap ?: return@withContext
+                    val renderedFinishedPreview = finishedPreview
+                    if (finishVersion == finishGeneration && renderedFinishedPreview != null) {
                         publishRenderedState(
-                            current = current,
-                            preview = preview,
-                            selectionDim = selectionDimBitmap,
-                            finishedPreview = currentFinishedPreview,
+                            preview = renderedPreview,
+                            selectionDim = renderedSelection,
+                            finishedPreview = renderedFinishedPreview,
                         )
+                        preview = null
+                        selectionDimBitmap = null
+                        finishedPreview = null
                     } else {
-                        preview.recycle()
-                        selectionDimBitmap.recycle()
-                        finishedPreview.recycle()
+                        publishPreviewState(
+                            preview = renderedPreview,
+                            selectionDim = renderedSelection,
+                        )
+                        preview = null
+                        selectionDimBitmap = null
+                        recycleBitmapWhenSafe(renderedFinishedPreview)
+                        finishedPreview = null
+                        scheduleFinishPreview(
+                            preview = renderedPreview,
+                            expectedPreviewGeneration = generation,
+                        )
                     }
                 }
-            } else {
-                preview.recycle()
-                selectionDimBitmap.recycle()
-                finishedPreview.recycle()
+            } finally {
+                recycleBitmapWhenSafe(finishedPreview)
+                recycleBitmapWhenSafe(selectionDimBitmap)
+                recycleBitmapWhenSafe(preview)
             }
         }
+        releaseBitmapUsesOnCompletion(job, background, original)
+        committedRenderJob = job
     }
 
     private fun cancelPreviewWork() {
         previewGeneration++
         previewJob?.cancel()
         committedRenderJob?.cancel()
+        finishPreviewJob?.cancel()
         previewJob = null
         committedRenderJob = null
+        finishPreviewJob = null
     }
 
     private fun beginNewSession() {
         cancelPreviewWork()
+        val previousState = _uiState.value
+        _uiState.value = EditorUiState.Idle
+        releaseSessionBitmaps(previousState)
         brushStrokes.clear()
         redoStrokes.clear()
         activeStrokePoints.clear()
         editingSticker = null
         _finishRecipe.value = FinishRecipe()
         finishGeneration++
-        backgroundBitmap = null
         _stickerName.value = "My Sticker"
         updateHistoryState()
     }
@@ -595,29 +709,172 @@ class StickerEditorViewModel @Inject constructor(
 
     override fun onCleared() {
         cancelPreviewWork()
+        val previousState = _uiState.value
+        _uiState.value = EditorUiState.Idle
+        releaseSessionBitmaps(previousState)
         super.onCleared()
     }
 
     private fun publishRenderedState(
-        current: EditorUiState.SegmentationReady,
         preview: Bitmap,
         selectionDim: Bitmap,
         finishedPreview: Bitmap,
     ) {
+        val current = _uiState.value as? EditorUiState.SegmentationReady
+        if (current == null) {
+            recycleBitmapWhenSafe(preview)
+            recycleBitmapWhenSafe(selectionDim)
+            recycleBitmapWhenSafe(finishedPreview)
+            return
+        }
+
         _uiState.value = current.copy(
             previewBitmap = preview,
             selectionDimBitmap = selectionDim,
             finishedPreviewBitmap = finishedPreview,
         )
-        listOf(current.previewBitmap, current.selectionDimBitmap, current.finishedPreviewBitmap)
-            .distinct()
-            .forEach { bitmap ->
-                if (bitmap !== preview && bitmap !== selectionDim && bitmap !== finishedPreview &&
-                    !bitmap.isRecycled
-                ) {
+        recycleReplacedBitmap(
+            current.previewBitmap,
+            preview,
+            current.originalBitmap,
+            current.finishedPreviewBitmap,
+        )
+        recycleReplacedBitmap(current.selectionDimBitmap, selectionDim)
+        recycleReplacedBitmap(current.finishedPreviewBitmap, finishedPreview, preview)
+    }
+
+    /** Publish a new cut-out while the finishing preview is rendered separately. */
+    private fun publishPreviewState(
+        preview: Bitmap,
+        selectionDim: Bitmap,
+    ) {
+        val current = _uiState.value as? EditorUiState.SegmentationReady
+        if (current == null) {
+            recycleBitmapWhenSafe(preview)
+            recycleBitmapWhenSafe(selectionDim)
+            return
+        }
+
+        _uiState.value = current.copy(
+            previewBitmap = preview,
+            selectionDimBitmap = selectionDim,
+        )
+        recycleReplacedBitmap(
+            current.previewBitmap,
+            preview,
+            current.originalBitmap,
+            current.finishedPreviewBitmap,
+        )
+        recycleReplacedBitmap(current.selectionDimBitmap, selectionDim)
+    }
+
+    /**
+     * Render only the finishing recipe off the main thread. The preview bitmap
+     * is retained for the lifetime of the job so a concurrent brush update can
+     * safely replace and defer its release.
+     */
+    private fun scheduleFinishPreview(
+        preview: Bitmap,
+        expectedPreviewGeneration: Long,
+    ) {
+        finishPreviewJob?.cancel()
+        val renderGeneration = finishGeneration
+        val recipe = _finishRecipe.value
+        val background = backgroundBitmap
+        retainBitmap(preview)
+        retainBitmap(background)
+
+        val job = viewModelScope.launch(Dispatchers.Default) {
+            var rendered: Bitmap? = null
+            try {
+                // Coalesce rapid slider changes into one render for the latest recipe.
+                delay(16)
+                rendered = StickerFinishRenderer.render(
+                    cutout = preview,
+                    recipe = recipe,
+                    backgroundBitmap = background,
+                )
+                withContext(Dispatchers.Main.immediate) {
+                    val current = _uiState.value as? EditorUiState.SegmentationReady
+                    val candidate = rendered ?: return@withContext
+                    if (
+                        renderGeneration == finishGeneration &&
+                        expectedPreviewGeneration == previewGeneration &&
+                        current?.previewBitmap === preview
+                    ) {
+                        _uiState.value = current.copy(finishedPreviewBitmap = candidate)
+                        recycleReplacedBitmap(current.finishedPreviewBitmap, candidate, preview)
+                        rendered = null
+                    }
+                }
+            } finally {
+                recycleBitmapWhenSafe(rendered)
+            }
+        }
+        releaseBitmapUsesOnCompletion(job, background, preview)
+        finishPreviewJob = job
+    }
+
+    private fun recycleReplacedBitmap(bitmap: Bitmap?, vararg keep: Bitmap?) {
+        if (bitmap == null || keep.any { it === bitmap }) return
+        recycleBitmapWhenSafe(bitmap)
+    }
+
+    private fun releaseBitmapUsesOnCompletion(job: Job, vararg bitmaps: Bitmap?) {
+        job.invokeOnCompletion {
+            bitmaps.forEach(::releaseBitmapUse)
+        }
+    }
+
+    private fun releaseSessionBitmaps(previousState: EditorUiState) {
+        val bitmaps = Collections.newSetFromMap(IdentityHashMap<Bitmap, Boolean>())
+        originalBitmap?.let(bitmaps::add)
+        backgroundBitmap?.let(bitmaps::add)
+        if (previousState is EditorUiState.SegmentationReady) {
+            bitmaps.add(previousState.originalBitmap)
+            bitmaps.add(previousState.previewBitmap)
+            bitmaps.add(previousState.selectionDimBitmap)
+            bitmaps.add(previousState.finishedPreviewBitmap)
+        }
+        originalBitmap = null
+        backgroundBitmap = null
+        bitmaps.forEach(::recycleBitmapWhenSafe)
+    }
+
+    private fun retainBitmap(bitmap: Bitmap?) {
+        if (bitmap == null) return
+        synchronized(bitmapLifecycleLock) {
+            if (!bitmap.isRecycled) {
+                bitmapUseCounts[bitmap] = (bitmapUseCounts[bitmap] ?: 0) + 1
+            }
+        }
+    }
+
+    private fun releaseBitmapUse(bitmap: Bitmap?) {
+        if (bitmap == null) return
+        synchronized(bitmapLifecycleLock) {
+            val count = bitmapUseCounts[bitmap] ?: return
+            if (count > 1) {
+                bitmapUseCounts[bitmap] = count - 1
+            } else {
+                bitmapUseCounts.remove(bitmap)
+                if (deferredBitmapReleases.remove(bitmap) && !bitmap.isRecycled) {
                     bitmap.recycle()
                 }
             }
+        }
+    }
+
+    private fun recycleBitmapWhenSafe(bitmap: Bitmap?) {
+        if (bitmap == null) return
+        synchronized(bitmapLifecycleLock) {
+            if (bitmap.isRecycled) return
+            if ((bitmapUseCounts[bitmap] ?: 0) > 0) {
+                deferredBitmapReleases.add(bitmap)
+            } else {
+                bitmap.recycle()
+            }
+        }
     }
 
     private suspend fun buildPreview(): Bitmap = withContext(Dispatchers.Default) {
@@ -630,10 +887,14 @@ class StickerEditorViewModel @Inject constructor(
         )
     }
 
-    private fun buildFinishedPreview(cutout: Bitmap): Bitmap = StickerFinishRenderer.render(
+    private fun buildFinishedPreview(
+        cutout: Bitmap,
+        recipe: FinishRecipe = _finishRecipe.value,
+        background: Bitmap? = backgroundBitmap,
+    ): Bitmap = StickerFinishRenderer.render(
         cutout = cutout,
-        recipe = _finishRecipe.value,
-        backgroundBitmap = backgroundBitmap,
+        recipe = recipe,
+        backgroundBitmap = background,
     )
 
 }

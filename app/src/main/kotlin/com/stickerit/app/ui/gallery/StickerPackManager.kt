@@ -35,6 +35,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -70,6 +72,7 @@ fun StickerPackManagerDialog(
     var metadataTarget by remember { mutableStateOf<StickerPackItemEntity?>(null) }
     val selectedPack = packs.firstOrNull { it.id == selectedPackId }
     val stickersById = remember(stickers) { stickers.associateBy { it.id } }
+    val canDeletePack = packs.size > 1
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -100,7 +103,8 @@ fun StickerPackManagerDialog(
                             selectedCount = if (pack.id == selectedPack?.id) packItems.size else null,
                             onSelect = { onSelectPack(pack.id) },
                             onRename = { renameTarget = pack },
-                            onDelete = { deleteTarget = pack },
+                            onDelete = { if (canDeletePack) deleteTarget = pack },
+                            canDelete = canDeletePack,
                             onPickTrayImage = { onPickTrayImage(pack.id) },
                         )
                     }
@@ -198,10 +202,13 @@ fun StickerPackManagerDialog(
             title = { Text(stringResource(R.string.delete_pack_title)) },
             text = { Text(stringResource(R.string.delete_pack_message, pack.name)) },
             confirmButton = {
-                TextButton(onClick = {
-                    onDeletePack(pack.id)
-                    deleteTarget = null
-                }) { Text(stringResource(R.string.delete)) }
+                TextButton(
+                    enabled = canDeletePack,
+                    onClick = {
+                        if (canDeletePack) onDeletePack(pack.id)
+                        deleteTarget = null
+                    },
+                ) { Text(stringResource(R.string.delete)) }
             },
             dismissButton = {
                 TextButton(onClick = { deleteTarget = null }) { Text(stringResource(R.string.cancel)) }
@@ -231,8 +238,10 @@ private fun PackRow(
     onSelect: () -> Unit,
     onRename: () -> Unit,
     onDelete: () -> Unit,
+    canDelete: Boolean,
     onPickTrayImage: () -> Unit,
 ) {
+    val lastPackRequiredDescription = stringResource(R.string.last_pack_required)
     Card(
         modifier = Modifier.fillMaxWidth(),
         onClick = onSelect,
@@ -260,7 +269,17 @@ private fun PackRow(
                 IconButton(onClick = onRename) {
                     Icon(Icons.Outlined.Edit, contentDescription = stringResource(R.string.rename_pack))
                 }
-                IconButton(onClick = onDelete) {
+                IconButton(
+                    onClick = onDelete,
+                    enabled = canDelete,
+                    modifier = if (canDelete) {
+                        Modifier
+                    } else {
+                        Modifier.semantics {
+                            stateDescription = lastPackRequiredDescription
+                        }
+                    },
+                ) {
                     Icon(Icons.Outlined.Delete, contentDescription = stringResource(R.string.delete))
                 }
             }
@@ -293,7 +312,7 @@ private fun PackStickerRow(
         )
         Column(modifier = Modifier.weight(1f).padding(horizontal = 8.dp)) {
             Text(
-                sticker?.name ?: "Sticker",
+                sticker?.name ?: stringResource(R.string.sticker_default_name),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
                 style = MaterialTheme.typography.bodyMedium,

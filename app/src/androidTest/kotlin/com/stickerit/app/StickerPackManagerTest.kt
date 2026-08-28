@@ -3,6 +3,7 @@ package com.stickerit.app
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -42,6 +43,7 @@ class StickerPackManagerTest {
 
         composeRule.onNodeWithText("WhatsApp packs").assertIsDisplayed()
         composeRule.onNodeWithText("Animals").assertIsDisplayed()
+        composeRule.onNodeWithContentDescription("Delete").assertIsNotEnabled()
         composeRule.onNodeWithText("Create pack").assertHasClickAction()
         composeRule.onNodeWithText("Add selected to pack").assertHasClickAction()
     }

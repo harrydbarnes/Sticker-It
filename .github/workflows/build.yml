@@ -30,24 +30,50 @@ jobs:
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
-    - name: Verify
-      run: ./gradlew lintDebug testDebugUnitTest assembleDebug assembleRelease --no-daemon
+    - name: Verify Java and Gradle toolchain
+      run: |
+        java -version
+        ./gradlew --version
 
-    - name: Upload APK
+    - name: Run lint
+      run: ./gradlew :app:lintDebug --no-daemon --stacktrace
+
+    - name: Run JVM unit tests
+      if: always()
+      run: ./gradlew :app:testDebugUnitTest --no-daemon --stacktrace
+
+    - name: Build debug and release artifacts
+      if: always()
+      run: ./gradlew :app:assembleDebug :app:assembleRelease --no-daemon --stacktrace
+
+    - name: Analyze release shrinker configuration
+      if: always()
+      run: ./gradlew :app:analyzeReleaseR8Config --no-daemon --stacktrace
+
+    - name: Verify Room migration schemas are generated
+      if: always()
+      run: test -n "$(find app/schemas -type f -name '*.json' -print -quit)"
+
+    - name: Upload verification reports and APKs
+      if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: app-debug
-        path: app/build/outputs/apk/debug/app-debug.apk
-        if-no-files-found: error
+        name: verification-${{ github.run_attempt }}
+        path: |
+          app/build/reports/
+          app/build/test-results/
+          app/build/outputs/apk/
+          app/build/outputs/mapping/
+          app/schemas/
+        if-no-files-found: ignore
         retention-days: 14
 
   instrumented:
-    needs: build
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        api-level: [26, 35]
+        api-level: [26, 35, 36, 37]
 
     steps:
     - uses: actions/checkout@v5
@@ -72,3 +98,15 @@ jobs:
         disable-animations: true
         pre-emulator-launch-script: ./gradlew assembleDebug assembleDebugAndroidTest --no-daemon --console=plain
         script: ./gradlew connectedDebugAndroidTest --no-daemon --console=plain
+
+    - name: Upload instrumented test reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: instrumented-api-${{ matrix.api-level }}-${{ github.run_attempt }}
+        path: |
+          app/build/reports/androidTests/
+          app/build/outputs/androidTest-results/
+          app/build/outputs/apk/
+        if-no-files-found: ignore
+        retention-days: 14

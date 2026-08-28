@@ -2,8 +2,10 @@ package com.stickerit.app.data.backup
 
 import android.content.Context
 import android.net.Uri
+import androidx.room.withTransaction
 import com.stickerit.app.data.local.StickerDao
 import com.stickerit.app.data.local.StickerPackDao
+import com.stickerit.app.data.local.StickerDatabase
 import com.stickerit.app.data.model.DEFAULT_STICKER_PACK_ID
 import com.stickerit.app.data.model.Sticker
 import com.stickerit.app.data.model.StickerPackEntity
@@ -41,13 +43,29 @@ sealed interface StickerBackupResult {
 @Singleton
 class StickerBackupRepository @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val database: StickerDatabase,
     private val stickerDao: StickerDao,
     private val packDao: StickerPackDao,
 ) {
 
     suspend fun exportLibrary(destination: Uri): StickerBackupResult = withContext(Dispatchers.IO) {
         try {
-            val stickers = stickerDao.getAll()
+            // Keep metadata and pack membership from one database snapshot.
+            // Otherwise a concurrent edit can produce an archive whose pack
+            // references a sticker record that was read from a different point
+            // in time.
+            val snapshot = database.withTransaction {
+                val stickers = stickerDao.getAll()
+                val packs = packDao.getAllPacks()
+                LibrarySnapshot(
+                    stickers = stickers,
+                    packs = packs,
+                    itemsByPackId = packs.associate { pack ->
+                        pack.id to packDao.getItems(pack.id)
+                    },
+                )
+            }
+            val stickers = snapshot.stickers
             check(stickers.size <= StickerBackupFormat.MAX_STICKERS) {
                 "The library contains too many stickers for one backup"
             }
@@ -112,7 +130,7 @@ class StickerBackupRepository @Inject constructor(
                 )
             }
 
-            val packs = packDao.getAllPacks()
+            val packs = snapshot.packs
             check(packs.size <= StickerBackupFormat.MAX_PACKS) {
                 "The library contains too many packs for one backup"
             }
@@ -120,7 +138,7 @@ class StickerBackupRepository @Inject constructor(
                 check(StickerBackupFormat.isSafePackId(pack.id)) {
                     "A pack identifier is invalid"
                 }
-                val packItems = packDao.getItems(pack.id)
+                val packItems = snapshot.itemsByPackId.getValue(pack.id)
                 check(packItems.size <= StickerBackupFormat.MAX_PACK_ITEMS) {
                     "A pack contains too many stickers"
                 }
@@ -266,165 +284,170 @@ class StickerBackupRepository @Inject constructor(
                 }
             }
 
-            val existingStickers = stickerDao.getAll()
-            val stickerIdsByHash = mutableMapOf<String, Long>()
-            existingStickers.forEach { sticker ->
-                runCatching { sha256(File(sticker.filePath)) }
-                    .onSuccess { hash -> stickerIdsByHash.putIfAbsent(hash, sticker.id) }
-            }
-            val stickersDirectory = File(context.filesDir, "stickers").apply { mkdirs() }
-            val backgroundsDirectory = File(stickersDirectory, "backgrounds").apply { mkdirs() }
-            var nextSortOrder = (existingStickers.maxOfOrNull { it.sortOrder } ?: -1) + 1
-            var importedCount = 0
-            var skippedCount = 0
-            val stickerIdsByEntry = mutableMapOf<String, Long>()
-
-            records.forEach { record ->
-                val asset = entries.getValue(record.assetEntry)
-                val hash = sha256(asset)
-                val existingId = stickerIdsByHash[hash]
-                if (existingId != null) {
-                    skippedCount++
-                    stickerIdsByEntry[record.assetEntry] = existingId
-                    return@forEach
+            // Room rolls back all record and membership changes together. File
+            // copies remain covered by the existing rollback ledger below.
+            val importResult = database.withTransaction {
+                val existingStickers = stickerDao.getAll()
+                val stickerIdsByHash = mutableMapOf<String, Long>()
+                existingStickers.forEach { sticker ->
+                    runCatching { sha256(File(sticker.filePath)) }
+                        .onSuccess { hash -> stickerIdsByHash.putIfAbsent(hash, sticker.id) }
                 }
+                val stickersDirectory = File(context.filesDir, "stickers").apply { mkdirs() }
+                val backgroundsDirectory = File(stickersDirectory, "backgrounds").apply { mkdirs() }
+                var nextSortOrder = (existingStickers.maxOfOrNull { it.sortOrder } ?: -1) + 1
+                var importedCount = 0
+                var skippedCount = 0
+                val stickerIdsByEntry = mutableMapOf<String, Long>()
 
-                val baseName = "sticker_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(8)}"
-                val target = File(stickersDirectory, "$baseName.webp")
-                copyToOwned(asset, target)
-                createdFiles += target
-
-                val sourceTarget = record.sourceEntry?.let { entry ->
-                    File(stickersDirectory, "$baseName.source.webp").also { targetFile ->
-                        copyToOwned(entries.getValue(entry), targetFile)
-                        createdFiles += targetFile
+                records.forEach { record ->
+                    val asset = entries.getValue(record.assetEntry)
+                    val hash = sha256(asset)
+                    val existingId = stickerIdsByHash[hash]
+                    if (existingId != null) {
+                        skippedCount++
+                        stickerIdsByEntry[record.assetEntry] = existingId
+                        return@forEach
                     }
-                }
-                val maskTarget = record.maskEntry?.let { entry ->
-                    File(stickersDirectory, "$baseName.mask").also { targetFile ->
-                        copyToOwned(entries.getValue(entry), targetFile)
-                        createdFiles += targetFile
-                    }
-                }
-                val backgroundTarget = record.backgroundEntry?.let { entry ->
-                    File(backgroundsDirectory, "background_${UUID.randomUUID().toString().take(12)}.webp")
-                        .also { targetFile ->
+
+                    val baseName = "sticker_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(8)}"
+                    val target = File(stickersDirectory, "$baseName.webp")
+                    copyToOwned(asset, target)
+                    createdFiles += target
+
+                    val sourceTarget = record.sourceEntry?.let { entry ->
+                        File(stickersDirectory, "$baseName.source.webp").also { targetFile ->
                             copyToOwned(entries.getValue(entry), targetFile)
                             createdFiles += targetFile
                         }
-                }
-
-                val importedSticker = Sticker(
-                    filePath = target.absolutePath,
-                    name = record.name,
-                    createdAt = record.createdAt.takeIf { it > 0 } ?: System.currentTimeMillis(),
-                    sortOrder = nextSortOrder++,
-                    width = record.width,
-                    height = record.height,
-                    legacyPackFlag = record.legacyPackFlag,
-                    sourceFilePath = sourceTarget?.absolutePath,
-                    maskFilePath = maskTarget?.absolutePath,
-                    finishRecipeJson = restoreRecipe(
-                        record.finishRecipeJson,
-                        backgroundTarget?.absolutePath,
-                    ),
-                )
-                val id = stickerDao.insert(importedSticker)
-                insertedIds += id
-                stickerIdsByHash[hash] = id
-                stickerIdsByEntry[record.assetEntry] = id
-                importedCount++
-            }
-
-            val existingPacks = packDao.getAllPacks()
-            val existingTrayNames = existingPacks.mapTo(mutableSetOf()) { it.trayImageFileName }
-            var importedPackCount = 0
-            var skippedPackCount = 0
-
-            parsedBackup.packs.forEach { pack ->
-                val existingPack = packDao.getPack(pack.originalId)
-                if (existingPack != null &&
-                    !(pack.originalId == DEFAULT_STICKER_PACK_ID &&
-                        packDao.getItems(pack.originalId).isEmpty())
-                ) {
-                    skippedPackCount++
-                    return@forEach
-                }
-
-                val targetPackId = pack.originalId
-                val trayFileName = if (existingPack != null) {
-                    existingPack.trayImageFileName
-                } else {
-                    importedTrayFileName(targetPackId, existingTrayNames)
-                }
-                val trayTarget = File(context.filesDir, trayFileName)
-                pack.trayImageEntry?.let { entry ->
-                    if (trayTarget.exists()) {
-                        val previous = File(
-                            temporaryDirectory,
-                            "previous-tray-${UUID.randomUUID().toString().take(8)}.png",
-                        )
-                        trayTarget.copyTo(previous, overwrite = true)
-                        replacedFiles += ReplacedFile(trayTarget, previous)
-                    } else {
-                        createdFiles += trayTarget
                     }
-                    copyToOwned(entries.getValue(entry), trayTarget)
+                    val maskTarget = record.maskEntry?.let { entry ->
+                        File(stickersDirectory, "$baseName.mask").also { targetFile ->
+                            copyToOwned(entries.getValue(entry), targetFile)
+                            createdFiles += targetFile
+                        }
+                    }
+                    val backgroundTarget = record.backgroundEntry?.let { entry ->
+                        File(backgroundsDirectory, "background_${UUID.randomUUID().toString().take(12)}.webp")
+                            .also { targetFile ->
+                                copyToOwned(entries.getValue(entry), targetFile)
+                                createdFiles += targetFile
+                            }
+                    }
+
+                    val importedSticker = Sticker(
+                        filePath = target.absolutePath,
+                        name = record.name,
+                        createdAt = record.createdAt.takeIf { it > 0 } ?: System.currentTimeMillis(),
+                        sortOrder = nextSortOrder++,
+                        width = record.width,
+                        height = record.height,
+                        legacyPackFlag = record.legacyPackFlag,
+                        sourceFilePath = sourceTarget?.absolutePath,
+                        maskFilePath = maskTarget?.absolutePath,
+                        finishRecipeJson = restoreRecipe(
+                            record.finishRecipeJson,
+                            backgroundTarget?.absolutePath,
+                        ),
+                    )
+                    val id = stickerDao.insert(importedSticker)
+                    insertedIds += id
+                    stickerIdsByHash[hash] = id
+                    stickerIdsByEntry[record.assetEntry] = id
+                    importedCount++
                 }
 
-                val packItems = pack.items.mapIndexed { index, item ->
-                    StickerPackItemEntity(
-                        packId = targetPackId,
-                        stickerId = stickerIdsByEntry[item.stickerEntry]
-                            ?: error("A pack references an unavailable sticker"),
-                        sortOrder = item.sortOrder.takeIf { it >= 0 } ?: index,
-                        emojis = item.emojis,
-                        accessibilityText = item.accessibilityText,
-                    )
-                }.distinctBy { it.stickerId }
-                val restoredTrayIsCustom = pack.trayImageIsCustom && pack.trayImageEntry != null
-                if (existingPack != null) {
-                    updatedPacks += PackSnapshot(
-                        pack = existingPack,
-                        items = packDao.getItems(existingPack.id),
-                    )
-                    packDao.updatePack(
-                        existingPack.copy(
-                            name = pack.name,
-                            publisher = pack.publisher,
-                            trayImageFileName = trayFileName,
-                            trayImageIsCustom = restoredTrayIsCustom,
-                            imageDataVersion = pack.imageDataVersion,
-                            createdAt = pack.createdAt,
-                            sortOrder = pack.sortOrder,
-                        ),
-                    )
-                } else {
-                    packDao.insertPack(
-                        StickerPackEntity(
-                            id = targetPackId,
-                            name = pack.name,
-                            publisher = pack.publisher,
-                            trayImageFileName = trayFileName,
-                            trayImageIsCustom = restoredTrayIsCustom,
-                            imageDataVersion = pack.imageDataVersion,
-                            createdAt = pack.createdAt,
-                            sortOrder = pack.sortOrder,
-                        ),
-                    )
-                    insertedPackIds += targetPackId
-                    existingTrayNames += trayFileName
+                val existingPacks = packDao.getAllPacks()
+                val existingTrayNames = existingPacks.mapTo(mutableSetOf()) { it.trayImageFileName }
+                var importedPackCount = 0
+                var skippedPackCount = 0
+
+                parsedBackup.packs.forEach { pack ->
+                    val existingPack = packDao.getPack(pack.originalId)
+                    if (existingPack != null &&
+                        !(pack.originalId == DEFAULT_STICKER_PACK_ID &&
+                            packDao.getItems(pack.originalId).isEmpty())
+                    ) {
+                        skippedPackCount++
+                        return@forEach
+                    }
+
+                    val targetPackId = pack.originalId
+                    val trayFileName = if (existingPack != null) {
+                        existingPack.trayImageFileName
+                    } else {
+                        importedTrayFileName(targetPackId, existingTrayNames)
+                    }
+                    val trayTarget = File(context.filesDir, trayFileName)
+                    pack.trayImageEntry?.let { entry ->
+                        if (trayTarget.exists()) {
+                            val previous = File(
+                                temporaryDirectory,
+                                "previous-tray-${UUID.randomUUID().toString().take(8)}.png",
+                            )
+                            trayTarget.copyTo(previous, overwrite = true)
+                            replacedFiles += ReplacedFile(trayTarget, previous)
+                        } else {
+                            createdFiles += trayTarget
+                        }
+                        copyToOwned(entries.getValue(entry), trayTarget)
+                    }
+
+                    val packItems = pack.items.mapIndexed { index, item ->
+                        StickerPackItemEntity(
+                            packId = targetPackId,
+                            stickerId = stickerIdsByEntry[item.stickerEntry]
+                                ?: error("A pack references an unavailable sticker"),
+                            sortOrder = item.sortOrder.takeIf { it >= 0 } ?: index,
+                            emojis = item.emojis,
+                            accessibilityText = item.accessibilityText,
+                        )
+                    }.distinctBy { it.stickerId }
+                    val restoredTrayIsCustom = pack.trayImageIsCustom && pack.trayImageEntry != null
+                    if (existingPack != null) {
+                        updatedPacks += PackSnapshot(
+                            pack = existingPack,
+                            items = packDao.getItems(existingPack.id),
+                        )
+                        packDao.updatePack(
+                            existingPack.copy(
+                                name = pack.name,
+                                publisher = pack.publisher,
+                                trayImageFileName = trayFileName,
+                                trayImageIsCustom = restoredTrayIsCustom,
+                                imageDataVersion = pack.imageDataVersion,
+                                createdAt = pack.createdAt,
+                                sortOrder = pack.sortOrder,
+                            ),
+                        )
+                    } else {
+                        packDao.insertPack(
+                            StickerPackEntity(
+                                id = targetPackId,
+                                name = pack.name,
+                                publisher = pack.publisher,
+                                trayImageFileName = trayFileName,
+                                trayImageIsCustom = restoredTrayIsCustom,
+                                imageDataVersion = pack.imageDataVersion,
+                                createdAt = pack.createdAt,
+                                sortOrder = pack.sortOrder,
+                            ),
+                        )
+                        insertedPackIds += targetPackId
+                        existingTrayNames += trayFileName
+                    }
+                    packDao.replaceItems(targetPackId, packItems)
+                    importedPackCount++
                 }
-                packDao.replaceItems(targetPackId, packItems)
-                importedPackCount++
+
+                StickerBackupResult.Imported(
+                    importedCount = importedCount,
+                    skippedCount = skippedCount,
+                    importedPackCount = importedPackCount,
+                    skippedPackCount = skippedPackCount,
+                )
             }
-
-            StickerBackupResult.Imported(
-                importedCount = importedCount,
-                skippedCount = skippedCount,
-                importedPackCount = importedPackCount,
-                skippedPackCount = skippedPackCount,
-            )
+            importResult
         } catch (error: CancellationException) {
             rollback()
             throw error
@@ -569,6 +592,12 @@ class StickerBackupRepository @Inject constructor(
     private data class PackSnapshot(
         val pack: StickerPackEntity,
         val items: List<StickerPackItemEntity>,
+    )
+
+    private data class LibrarySnapshot(
+        val stickers: List<Sticker>,
+        val packs: List<StickerPackEntity>,
+        val itemsByPackId: Map<String, List<StickerPackItemEntity>>,
     )
 
     private data class ReplacedFile(

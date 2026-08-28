@@ -17,8 +17,6 @@ import com.google.mediapipe.tasks.core.Delegate
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.imagesegmenter.ImageSegmenter
 import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.segmentation.subject.SubjectSegmentation
-import com.google.mlkit.vision.segmentation.subject.SubjectSegmenterOptions
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -41,6 +39,7 @@ import kotlin.math.roundToInt
 @Singleton
 class ImageSegmentationHelper @Inject constructor(
     @ApplicationContext private val context: Context,
+    private val segmentationModelManager: SegmentationModelManager,
 ) {
 
     companion object {
@@ -50,18 +49,8 @@ class ImageSegmentationHelper @Inject constructor(
         private const val BACKGROUND_CATEGORY = 0
     }
 
-    private val segmenter by lazy {
-        SubjectSegmentation.getClient(
-            SubjectSegmenterOptions.Builder()
-                .enableForegroundConfidenceMask()
-                .enableMultipleSubjects(
-                    SubjectSegmenterOptions.SubjectResultOptions.Builder()
-                        .enableConfidenceMask()
-                        .build()
-                )
-                .build()
-        )
-    }
+    private val segmenter: com.google.mlkit.vision.segmentation.subject.SubjectSegmenter
+        get() = segmentationModelManager.subjectSegmenter
 
     /**
      * MediaPipe is deliberately configured for the CPU delegate. The Android 16

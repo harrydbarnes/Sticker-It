@@ -44,8 +44,8 @@ class StickerGalleryViewModel @Inject constructor(
         initialValue = emptyList(),
     )
 
-    private val _snackbarMessage = MutableSharedFlow<String>()
-    val snackbarMessage: SharedFlow<String> = _snackbarMessage
+    private val _snackbarMessage = MutableSharedFlow<GalleryMessage>()
+    val snackbarMessage: SharedFlow<GalleryMessage> = _snackbarMessage
 
     private val _createdPack = MutableSharedFlow<String>(extraBufferCapacity = 1)
     val createdPack: SharedFlow<String> = _createdPack
@@ -55,7 +55,7 @@ class StickerGalleryViewModel @Inject constructor(
     fun deleteSticker(sticker: Sticker) {
         viewModelScope.launch {
             repository.deleteSticker(sticker)
-            _snackbarMessage.emit("Sticker deleted")
+            _snackbarMessage.emit(GalleryMessage.StickerDeleted)
         }
     }
 
@@ -75,30 +75,30 @@ class StickerGalleryViewModel @Inject constructor(
         viewModelScope.launch {
             val pack = packRepository.createPack(name)
             _createdPack.emit(pack.id)
-            _snackbarMessage.emit("Pack created")
+            _snackbarMessage.emit(GalleryMessage.PackCreated)
         }
     }
 
     fun renamePack(packId: String, name: String) {
         viewModelScope.launch {
-            if (packRepository.renamePack(packId, name)) _snackbarMessage.emit("Pack renamed")
+            if (packRepository.renamePack(packId, name)) _snackbarMessage.emit(GalleryMessage.PackRenamed)
         }
     }
 
     fun deletePack(packId: String) {
         viewModelScope.launch {
             if (packRepository.deletePack(packId)) {
-                _snackbarMessage.emit("Pack deleted")
+                _snackbarMessage.emit(GalleryMessage.PackDeleted)
             } else {
-                _snackbarMessage.emit("Keep at least one WhatsApp pack")
+                _snackbarMessage.emit(GalleryMessage.KeepOnePack)
             }
         }
     }
 
     fun setPackTrayImage(packId: String, uri: android.net.Uri) {
         viewModelScope.launch {
-            if (packRepository.setTrayImage(packId, uri)) _snackbarMessage.emit("Tray image updated")
-            else _snackbarMessage.emit("Could not use that image")
+            if (packRepository.setTrayImage(packId, uri)) _snackbarMessage.emit(GalleryMessage.TrayImageUpdated)
+            else _snackbarMessage.emit(GalleryMessage.CouldNotUseImage)
         }
     }
 
@@ -109,7 +109,7 @@ class StickerGalleryViewModel @Inject constructor(
     fun updatePackItemMetadata(packId: String, stickerId: Long, emojis: String, accessibilityText: String) {
         viewModelScope.launch {
             if (packRepository.updateItemMetadata(packId, stickerId, emojis, accessibilityText)) {
-                _snackbarMessage.emit("Sticker metadata saved")
+                _snackbarMessage.emit(GalleryMessage.StickerMetadataSaved)
             }
         }
     }
@@ -118,15 +118,15 @@ class StickerGalleryViewModel @Inject constructor(
         viewModelScope.launch {
             val result = runCatching { whatsAppHelper.addOrUpdateWhatsAppPack(packId, stickers) }
                 .getOrElse {
-                    _snackbarMessage.emit("Could not prepare the WhatsApp pack")
+                    _snackbarMessage.emit(GalleryMessage.CouldNotPrepareWhatsAppPack)
                     return@launch
                 }
             _snackbarMessage.emit(
                 when (result) {
-                    WhatsAppResult.Opened -> "Confirm the pack in WhatsApp to add or update it"
-                    WhatsAppResult.NotInstalled -> "WhatsApp is not installed on this device"
-                    WhatsAppResult.InvalidStickerCount -> "Choose between 3 and 30 stickers for a WhatsApp pack"
-                    WhatsAppResult.PackNotFound -> "Choose a WhatsApp pack first"
+                    WhatsAppResult.Opened -> GalleryMessage.ConfirmWhatsAppPack
+                    WhatsAppResult.NotInstalled -> GalleryMessage.WhatsAppNotInstalled
+                    WhatsAppResult.InvalidStickerCount -> GalleryMessage.InvalidWhatsAppStickerCount
+                    WhatsAppResult.PackNotFound -> GalleryMessage.WhatsAppPackNotFound
                 }
             )
         }

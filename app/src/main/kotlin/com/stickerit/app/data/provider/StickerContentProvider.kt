@@ -8,11 +8,8 @@ import android.database.Cursor
 import android.database.MatrixCursor
 import android.net.Uri
 import android.os.ParcelFileDescriptor
-import androidx.room.Room
-import com.stickerit.app.data.local.MIGRATION_1_2
-import com.stickerit.app.data.local.MIGRATION_2_3
-import com.stickerit.app.data.local.MIGRATION_3_4
 import com.stickerit.app.data.local.StickerDatabase
+import com.stickerit.app.data.local.StickerDatabaseFactory
 import com.stickerit.app.data.model.StickerPackEntity
 import java.io.File
 import java.io.FileNotFoundException
@@ -36,11 +33,7 @@ class StickerContentProvider : ContentProvider() {
         matcher.addURI(authority, "metadata/*", METADATA_ITEM)
         matcher.addURI(authority, "stickers/*", STICKERS)
         matcher.addURI(authority, "stickers_asset/*/*", STICKER_ASSET)
-        database = Room.databaseBuilder(
-            appContext,
-            StickerDatabase::class.java,
-            "sticker_it.db",
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build()
+        database = StickerDatabaseFactory.create(appContext)
         return true
     }
 
