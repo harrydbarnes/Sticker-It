@@ -1,7 +1,9 @@
 package com.stickerit.app.data.model
 
-import androidx.room.Entity
 import androidx.room.ColumnInfo
+import androidx.room.Entity
+import androidx.room.ForeignKey
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
 // ---------------------------------------------------------------------------
@@ -55,6 +57,62 @@ data class StickerFile(
     val imageFileName: String,
     val emojis: List<String>,
 )
+
+/**
+ * A named WhatsApp pack owned by the user. The tray image is kept as a
+ * filename inside the app's private files directory so the content provider
+ * can serve it without exposing arbitrary paths.
+ */
+@Entity(tableName = "sticker_packs")
+data class StickerPackEntity(
+    @PrimaryKey val id: String,
+    val name: String,
+    val publisher: String = "Sticker It",
+    val trayImageFileName: String = "whatsapp_tray.png",
+    val trayImageIsCustom: Boolean = false,
+    val imageDataVersion: String = "1",
+    val createdAt: Long = System.currentTimeMillis(),
+    val sortOrder: Int = 0,
+)
+
+/** Metadata and ordering for one sticker inside one named pack. */
+@Entity(
+    tableName = "sticker_pack_items",
+    primaryKeys = ["packId", "stickerId"],
+    foreignKeys = [
+        ForeignKey(
+            entity = StickerPackEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["packId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+        ForeignKey(
+            entity = Sticker::class,
+            parentColumns = ["id"],
+            childColumns = ["stickerId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index(value = ["stickerId"])],
+)
+data class StickerPackItemEntity(
+    val packId: String,
+    val stickerId: Long,
+    val sortOrder: Int = 0,
+    /** Comma-separated Unicode emoji keywords for WhatsApp search. */
+    val emojis: String = "😀",
+    /** Screen-reader-friendly description shown by the WhatsApp contract. */
+    val accessibilityText: String = "",
+)
+
+/** Flattened provider row so the content provider never needs to load Room relations. */
+data class PackStickerRow(
+    val filePath: String,
+    val emojis: String,
+    val accessibilityText: String,
+)
+
+const val DEFAULT_STICKER_PACK_ID = "stickerit_library"
 
 // ---------------------------------------------------------------------------
 // UI State helpers

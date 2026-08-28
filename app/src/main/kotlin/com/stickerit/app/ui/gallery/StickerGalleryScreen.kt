@@ -1,6 +1,10 @@
 package com.stickerit.app.ui.gallery
 
 import android.content.Intent
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
@@ -52,6 +56,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -72,6 +77,7 @@ import coil.compose.AsyncImage
 import com.stickerit.app.R
 import com.stickerit.app.data.model.GalleryUiState
 import com.stickerit.app.data.model.Sticker
+import kotlinx.coroutines.flow.flowOf
 import java.io.File
 
 @Composable
@@ -86,13 +92,47 @@ fun StickerGalleryScreen(
     var selectedIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var deleteTarget by remember { mutableStateOf<Sticker?>(null) }
     var renameTarget by remember { mutableStateOf<Sticker?>(null) }
+    var showPackManager by remember { mutableStateOf(false) }
+    var selectedPackId by rememberSaveable { mutableStateOf<String?>(null) }
+    var pendingCreatedPackId by remember { mutableStateOf<String?>(null) }
+    var trayImagePackId by remember { mutableStateOf<String?>(null) }
+    val packs by viewModel.packs.collectAsStateWithLifecycle()
+    val packItemsFlow = remember(selectedPackId) {
+        selectedPackId?.let(viewModel::packItems) ?: flowOf(emptyList())
+    }
+    val packItems by packItemsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+
+    val trayImagePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickVisualMedia(),
+    ) { uri: Uri? ->
+        val packId = trayImagePackId
+        trayImagePackId = null
+        if (uri != null && packId != null) viewModel.setPackTrayImage(packId, uri)
+    }
 
     LaunchedEffect(Unit) { viewModel.snackbarMessage.collect(snackbarHostState::showSnackbar) }
+    LaunchedEffect(Unit) {
+        viewModel.createdPack.collect { createdId ->
+            pendingCreatedPackId = createdId
+            selectedPackId = createdId
+            showPackManager = true
+        }
+    }
+    LaunchedEffect(packs) {
+        when {
+            pendingCreatedPackId != null && packs.any { it.id == pendingCreatedPackId } -> {
+                pendingCreatedPackId = null
+            }
+            pendingCreatedPackId == null &&
+                (selectedPackId == null || packs.none { it.id == selectedPackId }) -> {
+                selectedPackId = packs.firstOrNull()?.id
+            }
+        }
+    }
     Scaffold(
         contentWindowInsets = WindowInsets.safeDrawing,
         topBar = { GalleryTopBar(onBack, selectedIds.size, onClear = { selectedIds = emptySet() }, onAddToWhatsApp = {
-            val stickers = (uiState as? GalleryUiState.Ready)?.stickers.orEmpty().filter { it.id in selectedIds }
-            viewModel.addOrUpdateWhatsAppPack(stickers)
+            showPackManager = true
         }) },
         snackbarHost = { SnackbarHost(snackbarHostState) },
     ) { padding ->
@@ -111,6 +151,33 @@ fun StickerGalleryScreen(
                 onRename = { renameTarget = it },
             )
         }
+    }
+    if (showPackManager) {
+        StickerPackManagerDialog(
+            packs = packs,
+            selectedPackId = selectedPackId,
+            packItems = packItems,
+            stickers = (uiState as? GalleryUiState.Ready)?.stickers.orEmpty(),
+            onDismiss = { showPackManager = false },
+            onSelectPack = { selectedPackId = it },
+            onCreatePack = viewModel::createPack,
+            onRenamePack = viewModel::renamePack,
+            onDeletePack = viewModel::deletePack,
+            onPickTrayImage = { packId ->
+                trayImagePackId = packId
+                trayImagePicker.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                )
+            },
+            onReorderItems = { ids -> selectedPackId?.let { viewModel.reorderPackItems(it, ids) } },
+            onUpdateMetadata = viewModel::updatePackItemMetadata,
+            onConfirm = { packId ->
+                val stickers = (uiState as? GalleryUiState.Ready)?.stickers.orEmpty()
+                    .filter { it.id in selectedIds }
+                viewModel.addOrUpdateWhatsAppPack(packId, stickers)
+                showPackManager = false
+            },
+        )
     }
     deleteTarget?.let { sticker ->
         AlertDialog(

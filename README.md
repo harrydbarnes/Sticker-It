@@ -31,12 +31,15 @@
 - **Share** individual stickers via Android's share sheet
 - **Delete** stickers with confirmation
 - **Edit** any saved sticker again without losing its existing selection
-- **Select 3–30 stickers** and add or update one WhatsApp sticker pack
+- **Select 3–30 stickers** and add or update a named WhatsApp sticker pack
+- **Manage multiple packs** with independent names, tray images, sticker ordering, emoji keywords, and accessibility descriptions
 - **Batch creation** — select multiple photos, watch each result process independently, retry failures, and fine-tune results later
+- **Library backup** — export stickers, editable source/mask data, finishing recipes, and pack definitions to a portable archive, then restore them safely after a reinstall
 
 ### WhatsApp Pack Integration
-- Select the stickers that belong in your pack; the app exposes only those assets through WhatsApp's documented `ContentProvider` contract
-- One-tap **WhatsApp** opens WhatsApp's confirmation screen; selecting a different set later updates the same pack with a new image-data version
+- Select the stickers that belong in a named pack; the app exposes only that pack's assets through WhatsApp's documented `ContentProvider` contract
+- Create, rename, or delete packs from the gallery, choose a pack-specific tray image, reorder its stickers, and edit the emoji/accessibility metadata WhatsApp receives
+- One-tap **WhatsApp** opens WhatsApp's confirmation screen; selecting a different set later updates the chosen pack with a new image-data version
 - Static stickers are encoded as 512 × 512 WebP and capped at WhatsApp's 100 KB limit
 
 ---
@@ -47,10 +50,11 @@
 app/
 └── src/main/kotlin/com/stickerit/app/
     ├── data/
+    │   ├── backup/         Versioned library archive format and recovery repository
     │   ├── local/          Room database, DAO
     │   ├── model/          Sticker, StickerPack, UI state sealed classes
     │   ├── provider/       StickerContentProvider (WhatsApp), WhatsAppHelper
-    │   └── repository/     StickerRepository (single source of truth)
+    │   └── repository/     StickerRepository, StickerPackRepository
     ├── di/                 Hilt modules (database, app context)
     ├── domain/             ImageSegmentationHelper (ML Kit/MediaPipe segmentation + brush engine)
     └── ui/
@@ -74,7 +78,7 @@ app/
 | Image loading | Coil |
 | Database | Room |
 | Async | Kotlin Coroutines + Flow |
-| Storage | Internal storage (WebP files) |
+| Storage | Internal storage (WebP files) + user-selected backup ZIP |
 
 ---
 
@@ -131,11 +135,12 @@ The debug APK will be at `app/build/outputs/apk/debug/app-debug.apk`.
 
 ### WhatsApp Pack Integration
 
-The selected library items are exposed via `StickerContentProvider`:
+Named pack records and ordered sticker membership are stored in Room. On upgrade, the old `stickerit_library` JSON manifest is imported into the default pack once, preserving the previous selection where possible. The selected pack is then exposed via `StickerContentProvider`:
 
 ```
-content://com.stickerit.app.stickercontentprovider/metadata                              → pack metadata
-content://com.stickerit.app.stickercontentprovider/stickers/{id}                         → selected stickers
+content://com.stickerit.app.stickercontentprovider/metadata                              → all named pack metadata
+content://com.stickerit.app.stickercontentprovider/metadata/{pack}                       → one pack's metadata
+content://com.stickerit.app.stickercontentprovider/stickers/{pack}                       → ordered stickers and per-sticker metadata
 content://com.stickerit.app.stickercontentprovider/stickers_asset/{pack}/{file}          → WebP/PNG asset
 ```
 
@@ -143,11 +148,17 @@ Tapping **WhatsApp** fires the documented intent:
 
 ```kotlin
 Intent("com.whatsapp.intent.action.ENABLE_STICKER_PACK")
-    .putExtra("sticker_pack_id", "stickerit_library")
+    .putExtra("sticker_pack_id", selectedPackId)
     .putExtra("sticker_pack_authority", "com.stickerit.app.stickercontentprovider")
 ```
 
 WhatsApp displays its own confirmation sheet. The user must confirm every add/update; the app cannot silently write into WhatsApp.
+
+### Library Backup and Recovery
+
+Settings provides **Export library** and **Import library** actions using Android's system file picker. The export is a versioned ZIP containing sticker metadata, final WebP assets, private source/mask files, finishing recipes, named pack definitions, pack membership, and custom tray images. Private absolute filesystem paths are removed from the archive and rebuilt when it is imported.
+
+Import is an additive merge: matching final sticker assets and non-empty pack IDs are skipped, existing sticker records are never replaced or deleted, and the migration-created empty default pack can be populated after a reinstall. A failed restore rolls back the records and files created during that attempt. Archive paths and sizes are validated before anything is added to the library.
 
 ### Why not Gboard?
 
@@ -180,12 +191,13 @@ No photo-storage or internet permission is requested. Android's system Photo Pic
 
 ## Roadmap
 
-- [ ] Emoji tagging and accessibility labels for each sticker (for WhatsApp search and screen readers)
+- [x] Emoji tagging and accessibility labels for each sticker (for WhatsApp search and screen readers)
 - [x] Re-select a library set to update the WhatsApp pack in place
 - [x] Re-edit saved stickers with their private source image and selection mask
-- [ ] Multiple named WhatsApp packs (organise by theme)
+- [x] Multiple named WhatsApp packs (organise by theme)
 - [x] Finishing studio with outline, background replacement, positioning, and text/emoji overlays
 - [x] Batch import (create stickers from multiple images at once)
+- [x] Library export/import and recovery
 - [x] Edge-to-edge and accessibility coverage for the core screens
 - [ ] Widget for quick sticker access from the home screen
 - [ ] Export as animated WebP (support for animated stickers)

@@ -8,7 +8,7 @@ import java.io.File
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** Small manifest that the exported provider can read without accessing Room. */
+/** Legacy manifest kept only so the Room pack migration can recover v3 selections. */
 @Singleton
 class WhatsAppPackStore @Inject constructor(private val context: Context) {
     data class Pack(val identifier: String, val name: String, val fileNames: List<String>, val imageDataVersion: String)

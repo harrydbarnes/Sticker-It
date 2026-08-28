@@ -8,6 +8,12 @@ import android.database.Cursor
 import android.database.MatrixCursor
 import android.net.Uri
 import android.os.ParcelFileDescriptor
+import androidx.room.Room
+import com.stickerit.app.data.local.MIGRATION_1_2
+import com.stickerit.app.data.local.MIGRATION_2_3
+import com.stickerit.app.data.local.MIGRATION_3_4
+import com.stickerit.app.data.local.StickerDatabase
+import com.stickerit.app.data.model.StickerPackEntity
 import java.io.File
 import java.io.FileNotFoundException
 
@@ -19,69 +25,130 @@ class StickerContentProvider : ContentProvider() {
         private const val STICKERS = 3
         private const val STICKER_ASSET = 4
         private val matcher = UriMatcher(UriMatcher.NO_MATCH)
-        private val metadataColumns = arrayOf(
-            "identifier", "name", "publisher", "tray_image_file", "image_data_version",
-            "avoid_cache", "publisher_email", "publisher_website", "privacy_policy_website",
-            "license_agreement_website", "android_play_store_link", "ios_app_store_link", "animated_sticker_pack",
-        )
-        private val stickerColumns = arrayOf("sticker_file_name", "sticker_emojis", "accessibility_text")
     }
 
+    private var database: StickerDatabase? = null
+
     override fun onCreate(): Boolean {
-        val authority = context?.packageName + ".stickercontentprovider"
+        val appContext = context ?: return false
+        val authority = "${appContext.packageName}.stickercontentprovider"
         matcher.addURI(authority, "metadata", METADATA)
         matcher.addURI(authority, "metadata/*", METADATA_ITEM)
         matcher.addURI(authority, "stickers/*", STICKERS)
         matcher.addURI(authority, "stickers_asset/*/*", STICKER_ASSET)
-        return context != null
+        database = Room.databaseBuilder(
+            appContext,
+            StickerDatabase::class.java,
+            "sticker_it.db",
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build()
+        return true
     }
 
-    override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor? = when (matcher.match(uri)) {
+    override fun query(
+        uri: Uri,
+        projection: Array<out String>?,
+        selection: String?,
+        selectionArgs: Array<out String>?,
+        sortOrder: String?,
+    ): Cursor? = when (matcher.match(uri)) {
         METADATA -> metadataCursor(null)
         METADATA_ITEM -> metadataCursor(uri.lastPathSegment)
         STICKERS -> stickerCursor(uri.lastPathSegment)
         else -> null
     }
 
-    private fun pack() = context?.let(::WhatsAppPackStore)?.readPack()
+    private fun packs(): List<StickerPackEntity> = database?.stickerPackDao()?.getAllPacks().orEmpty()
 
     private fun metadataCursor(identifier: String?): Cursor {
-        val cursor = MatrixCursor(metadataColumns)
-        val pack = pack() ?: return cursor
-        if (identifier == null || identifier == pack.identifier) cursor.addRow(arrayOf(
-            pack.identifier, pack.name, "Sticker It", "whatsapp_tray.png", pack.imageDataVersion,
-            false, "", "", "", "", "", "", false,
-        ))
+        val cursor = MatrixCursor(WhatsAppStickerContract.metadataColumns)
+        val matchingPacks = if (identifier == null) {
+            packs()
+        } else {
+            packs().filter { it.id == identifier }
+        }
+        matchingPacks.forEach { pack ->
+            cursor.addRow(
+                arrayOf(
+                    pack.id,
+                    pack.name,
+                    pack.publisher,
+                    pack.trayImageFileName,
+                    pack.imageDataVersion,
+                    false,
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    "",
+                    false,
+                ),
+            )
+        }
         return cursor
     }
 
     private fun stickerCursor(identifier: String?): Cursor {
-        val cursor = MatrixCursor(stickerColumns)
-        val pack = pack()?.takeIf { it.identifier == identifier } ?: return cursor
-        pack.fileNames.forEach { cursor.addRow(arrayOf(it, "😀", "A custom sticker")) }
+        val cursor = MatrixCursor(WhatsAppStickerContract.stickerColumns)
+        val pack = identifier?.let { database?.stickerPackDao()?.getPack(it) } ?: return cursor
+        database?.stickerPackDao()?.getPackStickers(pack.id).orEmpty().forEach { row ->
+            val fileName = File(row.filePath).name
+            if (fileName.isBlank() || fileName == ".") return@forEach
+            cursor.addRow(
+                arrayOf(
+                    fileName,
+                    row.emojis.ifBlank { "😀" },
+                    row.accessibilityText.ifBlank { "Sticker" },
+                ),
+            )
+        }
         return cursor
     }
 
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor? {
         if (matcher.match(uri) != STICKER_ASSET || mode != "r") return null
         val parts = uri.pathSegments
-        val pack = pack() ?: throw FileNotFoundException("No sticker pack")
-        val fileName = parts.lastOrNull() ?: throw FileNotFoundException("Invalid sticker URI")
-        if (parts.getOrNull(1) != pack.identifier || (fileName !in pack.fileNames && fileName != "whatsapp_tray.png")) throw FileNotFoundException("Sticker is not in this pack")
-        val file = if (fileName == "whatsapp_tray.png") File(context!!.filesDir, fileName) else File(context!!.filesDir, "stickers/$fileName")
-        if (!file.isFile) throw FileNotFoundException("Sticker not found")
-        return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+        val packId = parts.getOrNull(1) ?: throw FileNotFoundException("Invalid sticker URI")
+        val fileName = parts.getOrNull(2) ?: throw FileNotFoundException("Invalid sticker URI")
+        if (File(fileName).name != fileName || fileName.isBlank()) {
+            throw FileNotFoundException("Invalid sticker filename")
+        }
+
+        val pack = database?.stickerPackDao()?.getPack(packId)
+            ?: throw FileNotFoundException("No sticker pack")
+        val isTray = fileName == pack.trayImageFileName
+        val isSticker = database?.stickerPackDao()?.getPackStickers(pack.id).orEmpty()
+            .any { File(it.filePath).name == fileName }
+        if (!isTray && !isSticker) throw FileNotFoundException("Sticker is not in this pack")
+
+        val root = if (isTray) context!!.filesDir else File(context!!.filesDir, "stickers")
+        val file = File(root, fileName)
+        val canonicalRoot = root.canonicalFile
+        val canonicalFile = file.canonicalFile
+        if (canonicalFile.parentFile != canonicalRoot || !canonicalFile.isFile) {
+            throw FileNotFoundException("Sticker not found")
+        }
+        return ParcelFileDescriptor.open(canonicalFile, ParcelFileDescriptor.MODE_READ_ONLY)
     }
 
     override fun openAssetFile(uri: Uri, mode: String): AssetFileDescriptor? =
         openFile(uri, mode)?.let { AssetFileDescriptor(it, 0, AssetFileDescriptor.UNKNOWN_LENGTH) }
 
-    override fun getType(uri: Uri) = when {
-        matcher.match(uri) != STICKER_ASSET -> null
-        uri.lastPathSegment == "whatsapp_tray.png" -> "image/png"
-        else -> "image/webp"
+    override fun getType(uri: Uri): String? {
+        if (matcher.match(uri) != STICKER_ASSET) return null
+        val fileName = uri.lastPathSegment ?: return null
+        val packId = uri.pathSegments.getOrNull(1)
+        val isTray = packs().firstOrNull { it.id == packId }?.trayImageFileName == fileName
+        return if (isTray) "image/png" else "image/webp"
     }
+
     override fun insert(uri: Uri, values: ContentValues?) = null
     override fun delete(uri: Uri, selection: String?, selectionArgs: Array<out String>?) = 0
     override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?) = 0
+
+    override fun shutdown() {
+        database?.close()
+        database = null
+        super.shutdown()
+    }
 }
