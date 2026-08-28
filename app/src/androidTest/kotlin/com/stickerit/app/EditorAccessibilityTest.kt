@@ -2,7 +2,7 @@ package com.stickerit.app
 
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.test.assertExists
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.unit.dp
@@ -38,6 +38,6 @@ class EditorAccessibilityTest {
 
         composeRule
             .onNodeWithContentDescription("Image selection canvas. Include mode. Drag to select an area.")
-            .assertExists()
+            .assertIsDisplayed()
     }
 }
