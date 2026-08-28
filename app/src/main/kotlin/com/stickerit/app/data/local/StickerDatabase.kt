@@ -1,6 +1,7 @@
 package com.stickerit.app.data.local
 
 import androidx.room.*
+import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 import com.stickerit.app.data.model.Sticker
 import kotlinx.coroutines.flow.Flow

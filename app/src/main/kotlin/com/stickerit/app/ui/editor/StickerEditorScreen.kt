@@ -121,6 +121,7 @@ fun StickerEditorScreen(
                         showPreviewMode = false
                     },
                     onFinishRecipeChange = viewModel::setFinishRecipe,
+                    onClearBackground = viewModel::clearBackgroundImage,
                     onPickBackground = {
                         backgroundPicker.launch(
                             PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
@@ -406,6 +407,7 @@ private fun EditorBottomBar(
     onOpenFinishStudio: () -> Unit,
     onCloseFinishStudio: () -> Unit,
     onFinishRecipeChange: (FinishRecipe) -> Unit,
+    onClearBackground: () -> Unit,
     onPickBackground: () -> Unit,
     onSave: () -> Unit,
 ) {
@@ -419,7 +421,7 @@ private fun EditorBottomBar(
                 recipe = finishRecipe,
                 onRecipeChange = onFinishRecipeChange,
                 onPickBackground = onPickBackground,
-                onClearBackground = viewModel::clearBackgroundImage,
+                onClearBackground = onClearBackground,
                 onBackToBrush = onCloseFinishStudio,
                 onSave = onSave,
                 modifier = Modifier
@@ -470,6 +472,10 @@ private fun EditorBottomBar(
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    val brushSizeDescription = stringResource(
+                        R.string.brush_size_accessibility,
+                        brushRadius.toInt(),
+                    )
                     Slider(
                         value = brushRadius,
                         onValueChange = onBrushRadiusChange,
@@ -478,10 +484,7 @@ private fun EditorBottomBar(
                         modifier = Modifier
                             .fillMaxWidth()
                             .semantics {
-                                contentDescription = stringResource(
-                                    R.string.brush_size_accessibility,
-                                    brushRadius.toInt(),
-                                )
+                                contentDescription = brushSizeDescription
                             },
                     )
                 }
@@ -555,6 +558,9 @@ private fun BrushModeButton(
         MaterialTheme.colorScheme.surfaceVariant
 
     val borderColour = if (selected) colour else Color.Transparent
+    val selectionDescription = stringResource(
+        if (selected) R.string.selected else R.string.not_selected,
+    )
 
     Surface(
         onClick = onClick,
@@ -562,9 +568,7 @@ private fun BrushModeButton(
             .height(52.dp)
             .semantics {
                 role = Role.RadioButton
-                stateDescription = stringResource(
-                    if (selected) R.string.selected else R.string.not_selected,
-                )
+                stateDescription = selectionDescription
             }
             .border(
                 width = 2.dp,

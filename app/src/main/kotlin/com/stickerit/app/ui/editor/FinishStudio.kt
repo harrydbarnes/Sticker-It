@@ -109,15 +109,16 @@ fun FinishStudioPanel(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
+                    val outlineStateDescription = stringResource(
+                        if (recipe.outlineEnabled) R.string.selected else R.string.not_selected,
+                    )
                     Switch(
                         checked = recipe.outlineEnabled,
                         onCheckedChange = {
                             onRecipeChange(recipe.copy(outlineEnabled = it))
                         },
                         modifier = Modifier.semantics {
-                            stateDescription = stringResource(
-                                if (recipe.outlineEnabled) R.string.selected else R.string.not_selected,
-                            )
+                            stateDescription = outlineStateDescription
                         },
                     )
                 }
@@ -135,6 +136,7 @@ fun FinishStudioPanel(
                         text = stringResource(R.string.outline_width),
                         style = MaterialTheme.typography.labelMedium,
                     )
+                    val outlineWidthDescription = stringResource(R.string.outline_width)
                     Slider(
                         value = recipe.outlineWidth,
                         onValueChange = {
@@ -142,7 +144,7 @@ fun FinishStudioPanel(
                         },
                         valueRange = 2f..28f,
                         modifier = Modifier.semantics {
-                            contentDescription = stringResource(R.string.outline_width)
+                            contentDescription = outlineWidthDescription
                         },
                     )
                 }
@@ -241,36 +243,39 @@ fun FinishStudioPanel(
             style = MaterialTheme.typography.titleSmall,
         )
         Text(stringResource(R.string.scale), style = MaterialTheme.typography.labelMedium)
+        val scaleDescription = stringResource(R.string.scale)
         Slider(
             value = recipe.scale,
             onValueChange = { onRecipeChange(recipe.copy(scale = it)) },
             valueRange = 0.55f..1.35f,
             modifier = Modifier.semantics {
-                contentDescription = stringResource(R.string.scale)
+                contentDescription = scaleDescription
             },
         )
         Text(
             text = stringResource(R.string.horizontal_position),
             style = MaterialTheme.typography.labelMedium,
         )
+        val horizontalPositionDescription = stringResource(R.string.horizontal_position)
         Slider(
             value = recipe.offsetX,
             onValueChange = { onRecipeChange(recipe.copy(offsetX = it)) },
             valueRange = -0.45f..0.45f,
             modifier = Modifier.semantics {
-                contentDescription = stringResource(R.string.horizontal_position)
+                contentDescription = horizontalPositionDescription
             },
         )
         Text(
             text = stringResource(R.string.vertical_position),
             style = MaterialTheme.typography.labelMedium,
         )
+        val verticalPositionDescription = stringResource(R.string.vertical_position)
         Slider(
             value = recipe.offsetY,
             onValueChange = { onRecipeChange(recipe.copy(offsetY = it)) },
             valueRange = -0.45f..0.45f,
             modifier = Modifier.semantics {
-                contentDescription = stringResource(R.string.vertical_position)
+                contentDescription = verticalPositionDescription
             },
         )
 
@@ -360,15 +365,17 @@ private fun FinishColorSwatches(
     ) {
         FINISH_COLORS.forEach { choice ->
             val selected = selectedColor == choice.value
+            val colorDescription = stringResource(choice.labelRes)
+            val selectionDescription = stringResource(
+                if (selected) R.string.selected else R.string.not_selected,
+            )
             Surface(
                 onClick = { onColorSelected(choice.value) },
                 modifier = Modifier
                     .size(40.dp)
                     .semantics {
-                        contentDescription = stringResource(choice.labelRes)
-                        stateDescription = stringResource(
-                            if (selected) R.string.selected else R.string.not_selected,
-                        )
+                        contentDescription = colorDescription
+                        stateDescription = selectionDescription
                     }
                     .border(
                         border = BorderStroke(

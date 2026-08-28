@@ -170,6 +170,9 @@ private fun StickerGrid(stickers: List<Sticker>, selectedIds: Set<Long>, modifie
 @Composable
 private fun StickerTile(sticker: Sticker, selected: Boolean, onToggle: () -> Unit, onShare: () -> Unit, onEdit: () -> Unit, onDelete: () -> Unit, onRename: () -> Unit) {
     var menuExpanded by remember { mutableStateOf(false) }
+    val selectionDescription = stringResource(
+        if (selected) R.string.selected else R.string.not_selected,
+    )
     Column {
         Card(
             modifier = Modifier
@@ -178,9 +181,7 @@ private fun StickerTile(sticker: Sticker, selected: Boolean, onToggle: () -> Uni
                 .combinedClickable(onClick = onToggle, onLongClick = { menuExpanded = true })
                 .semantics {
                     contentDescription = sticker.name
-                    stateDescription = stringResource(
-                        if (selected) R.string.selected else R.string.not_selected,
-                    )
+                    stateDescription = selectionDescription
                 },
             shape = MaterialTheme.shapes.large,
             colors = CardDefaults.cardColors(containerColor = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceContainer),
