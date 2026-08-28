@@ -264,7 +264,7 @@ class StickerEditorViewModel @Inject constructor(
     fun undoLastStroke() {
         if (brushStrokes.isNotEmpty()) {
             cancelPreviewWork()
-            redoStrokes.add(brushStrokes.removeLast())
+            redoStrokes.add(brushStrokes.removeAt(brushStrokes.lastIndex))
             updateHistoryState()
             recomputeMaskFromStrokes()
         }
@@ -273,7 +273,7 @@ class StickerEditorViewModel @Inject constructor(
     fun redoLastStroke() {
         if (redoStrokes.isNotEmpty()) {
             cancelPreviewWork()
-            brushStrokes.add(redoStrokes.removeLast())
+            brushStrokes.add(redoStrokes.removeAt(redoStrokes.lastIndex))
             updateHistoryState()
             recomputeMaskFromStrokes()
         }
