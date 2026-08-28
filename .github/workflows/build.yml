@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: \${{ github.workflow }}-\${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -62,10 +62,10 @@ jobs:
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew
 
-    - name: Run Compose UI tests on API \${{ matrix.api-level }}
+    - name: Run Compose UI tests on API ${{ matrix.api-level }}
       uses: reactivecircus/android-emulator-runner@v2
       with:
-        api-level: \${{ matrix.api-level }}
+        api-level: ${{ matrix.api-level }}
         target: default
         arch: x86_64
         profile: pixel_2
