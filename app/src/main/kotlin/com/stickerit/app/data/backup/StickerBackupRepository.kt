@@ -231,7 +231,7 @@ class StickerBackupRepository @Inject constructor(
         val updatedPacks = mutableListOf<PackSnapshot>()
         val replacedFiles = mutableListOf<ReplacedFile>()
 
-        fun rollback() {
+        suspend fun rollback() {
             insertedPackIds.asReversed().forEach { id ->
                 runCatching { packDao.deletePack(id) }
             }
@@ -242,7 +242,11 @@ class StickerBackupRepository @Inject constructor(
                 }
             }
             insertedIds.asReversed().forEach { id ->
-                runCatching { stickerDao.deleteById(id) }
+                try {
+                    stickerDao.deleteById(id)
+                } catch (_: Exception) {
+                    // Continue restoring the remaining imported records.
+                }
             }
             createdFiles.asReversed().forEach { it.delete() }
             replacedFiles.asReversed().forEach { replacement ->

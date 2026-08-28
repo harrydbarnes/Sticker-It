@@ -596,6 +596,8 @@ class StickerEditorViewModel @Inject constructor(
         committedRenderJob?.cancel()
         val original = originalBitmap
         val background = backgroundBitmap
+        val finishVersion = finishGeneration
+        val recipe = _finishRecipe.value
         retainBitmap(original)
         retainBitmap(background)
         val job = viewModelScope.launch(Dispatchers.Default) {

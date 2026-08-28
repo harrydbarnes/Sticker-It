@@ -61,7 +61,7 @@ class StickerContentProvider : ContentProvider() {
         }
         matchingPacks.forEach { pack ->
             cursor.addRow(
-                arrayOf(
+                arrayOf<Any?>(
                     pack.id,
                     pack.name,
                     pack.publisher,
