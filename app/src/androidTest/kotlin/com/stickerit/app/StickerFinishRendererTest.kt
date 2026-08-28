@@ -22,6 +22,7 @@ class StickerFinishRendererTest {
                 backgroundType = FinishBackgroundType.SOLID,
                 backgroundPrimaryColor = Color.BLUE,
                 outlineEnabled = true,
+                scale = 0.55f,
                 text = "Hi",
             ),
         )
