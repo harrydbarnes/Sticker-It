@@ -64,6 +64,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -89,6 +90,7 @@ fun StickerGalleryScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
     val context = LocalContext.current
+    val resources = LocalResources.current
     var selectedIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
     var deleteTarget by remember { mutableStateOf<Sticker?>(null) }
     var renameTarget by remember { mutableStateOf<Sticker?>(null) }
@@ -163,7 +165,7 @@ fun StickerGalleryScreen(
                     context.startActivity(
                         Intent.createChooser(
                             viewModel.buildShareIntent(sticker),
-                            context.getString(R.string.share_sticker),
+                            resources.getString(R.string.share_sticker),
                         ),
                     )
                 },
@@ -216,7 +218,7 @@ fun StickerGalleryScreen(
     ) }
 }
 
-private fun GalleryMessage.text(context: android.content.Context): String = context.getString(
+private fun GalleryMessage.text(resources: android.content.res.Resources): String = resources.getString(
     when (this) {
         GalleryMessage.StickerDeleted -> R.string.gallery_sticker_deleted
         GalleryMessage.PackCreated -> R.string.gallery_pack_created

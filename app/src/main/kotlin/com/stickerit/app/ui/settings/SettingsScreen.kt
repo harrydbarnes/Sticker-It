@@ -42,7 +42,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -60,7 +60,7 @@ fun SettingsScreen(
     val zoomAssistEnabled by viewModel.zoomAssistEnabled.collectAsStateWithLifecycle()
     val backupState by viewModel.backupState.collectAsStateWithLifecycle()
     val snackbarHostState = remember { SnackbarHostState() }
-    val context = LocalContext.current
+    val resources = LocalResources.current
     val exportLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/zip"),
     ) { uri: Uri? ->
@@ -75,40 +75,40 @@ fun SettingsScreen(
     LaunchedEffect(viewModel, snackbarHostState) {
         viewModel.backupEvents.collect { event ->
             val message = when (event) {
-                is BackupEvent.Exported -> context.getString(
+                is BackupEvent.Exported -> resources.getString(
                     R.string.backup_exported,
                     event.stickerCount,
                     event.packCount,
                 )
 
                 is BackupEvent.Imported -> when {
-                    event.importedPackCount > 0 || event.skippedPackCount > 0 -> context.getString(
+                    event.importedPackCount > 0 || event.skippedPackCount > 0 -> resources.getString(
                         R.string.backup_imported_with_pack_summary,
                         event.importedCount,
                         event.skippedCount,
                         event.importedPackCount,
                         event.skippedPackCount,
                     )
-                    event.importedCount > 0 && event.skippedCount > 0 -> context.getString(
+                    event.importedCount > 0 && event.skippedCount > 0 -> resources.getString(
                         R.string.backup_imported_with_skips,
                         event.importedCount,
                         event.skippedCount,
                     )
 
-                    event.importedCount > 0 -> context.getString(
+                    event.importedCount > 0 -> resources.getString(
                         R.string.backup_imported,
                         event.importedCount,
                     )
 
-                    event.skippedCount > 0 -> context.getString(
+                    event.skippedCount > 0 -> resources.getString(
                         R.string.backup_no_new_stickers,
                         event.skippedCount,
                     )
 
-                    else -> context.getString(R.string.backup_empty)
+                    else -> resources.getString(R.string.backup_empty)
                 }
 
-                BackupEvent.Failed -> context.getString(R.string.backup_failed)
+                BackupEvent.Failed -> resources.getString(R.string.backup_failed)
             }
             snackbarHostState.showSnackbar(message)
         }
