@@ -119,7 +119,7 @@ fun StickerGalleryScreen(
 
     LaunchedEffect(Unit) {
         viewModel.snackbarMessage.collect { message ->
-            snackbarHostState.showSnackbar(message.text(context))
+            snackbarHostState.showSnackbar(message.text(resources))
         }
     }
     LaunchedEffect(visibleStickerIds) {
