@@ -54,7 +54,7 @@ jobs:
       if: always()
       run: test -n "$(find app/schemas -type f -name '*.json' -print -quit)"
 
-    - name: Upload verification reports and APKs
+    - name: Upload verification reports
       if: always()
       uses: actions/upload-artifact@v4
       with:
@@ -62,10 +62,17 @@ jobs:
         path: |
           app/build/reports/
           app/build/test-results/
-          app/build/outputs/apk/
           app/build/outputs/mapping/
           app/schemas/
         if-no-files-found: ignore
+        retention-days: 14
+
+    - name: Upload downloadable debug APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: sticker-it-debug-apk-${{ github.run_attempt }}
+        path: app/build/outputs/apk/debug/app-debug.apk
+        if-no-files-found: error
         retention-days: 14
 
   instrumented:
@@ -107,6 +114,5 @@ jobs:
         path: |
           app/build/reports/androidTests/
           app/build/outputs/androidTest-results/
-          app/build/outputs/apk/
         if-no-files-found: ignore
         retention-days: 14
